@@ -103,6 +103,29 @@ spriteSheet.onerror = () => {
 };
 spriteSheet.src = SPRITE_SHEET.src;
 
+const PLAYER_WEAPON_SHEET = {
+  src: "./assets/player_weapon.png",
+  base: { x: 54, y: 1242, w: 268, h: 170 },
+  turrets: {
+    normal: { x: 430, y: 64, w: 160, h: 270, drawW: 58, drawH: 112 },
+    rapid: { x: 418, y: 462, w: 190, h: 214, drawW: 70, drawH: 96 },
+    spread: { x: 744, y: 452, w: 150, h: 218, drawW: 74, drawH: 98 },
+    laser: { x: 120, y: 820, w: 164, h: 250, drawW: 70, drawH: 108 },
+    flame: { x: 442, y: 820, w: 160, h: 250, drawW: 72, drawH: 108 },
+    double: { x: 744, y: 830, w: 220, h: 238, drawW: 84, drawH: 108 },
+  },
+};
+
+const playerWeaponSheet = new Image();
+let playerWeaponSheetReady = false;
+playerWeaponSheet.onload = () => {
+  playerWeaponSheetReady = true;
+};
+playerWeaponSheet.onerror = () => {
+  playerWeaponSheetReady = false;
+};
+playerWeaponSheet.src = PLAYER_WEAPON_SHEET.src;
+
 const WEAPONS = {
   normal: {
     id: "normal",
@@ -2050,6 +2073,10 @@ class Game {
       const glowColor = active ? weapon.color : "rgba(255, 255, 255, 0.18)";
       const angle = Math.atan2(aim.uy, aim.ux);
 
+      if (this.drawPlayerWeaponSprite(origin, angle, weapon, active, firing, now)) {
+        continue;
+      }
+
       ctx.save();
       ctx.translate(origin.x, origin.y);
       ctx.shadowColor = glowColor;
@@ -2147,6 +2174,71 @@ class Game {
     }
   }
 
+  drawPlayerWeaponSprite(origin, angle, weapon, active, firing, now) {
+    const turret = PLAYER_WEAPON_SHEET.turrets[weapon.id] || PLAYER_WEAPON_SHEET.turrets.normal;
+    const base = PLAYER_WEAPON_SHEET.base;
+    if (!playerWeaponSheetReady || !turret || !base) return false;
+
+    ctx.save();
+    ctx.translate(origin.x, origin.y);
+    ctx.globalAlpha = active ? 1 : 0.62;
+    ctx.shadowColor = active ? weapon.color : "rgba(255, 255, 255, 0.18)";
+    ctx.shadowBlur = active ? 14 : 4;
+    ctx.drawImage(
+      playerWeaponSheet,
+      base.x,
+      base.y,
+      base.w,
+      base.h,
+      -50,
+      -22,
+      100,
+      64,
+    );
+
+    ctx.rotate(angle + Math.PI / 2);
+    ctx.drawImage(
+      playerWeaponSheet,
+      turret.x,
+      turret.y,
+      turret.w,
+      turret.h,
+      -turret.drawW / 2,
+      -turret.drawH + 28,
+      turret.drawW,
+      turret.drawH,
+    );
+    ctx.restore();
+
+    if (firing) {
+      this.drawSpriteMuzzleFlash(origin, angle, weapon.color, now);
+    }
+    return true;
+  }
+
+  drawSpriteMuzzleFlash(origin, angle, color, now) {
+    const pulse = 0.74 + Math.sin(now * 0.05) * 0.18;
+    ctx.save();
+    ctx.translate(origin.x, origin.y);
+    ctx.rotate(angle);
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 16;
+    ctx.fillStyle = "rgba(255, 246, 190, 0.88)";
+    ctx.beginPath();
+    ctx.moveTo(74, 0);
+    ctx.lineTo(106, -11 * pulse);
+    ctx.lineTo(96, 0);
+    ctx.lineTo(106, 11 * pulse);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = color;
+    ctx.globalAlpha = 0.55;
+    ctx.beginPath();
+    ctx.arc(86, 0, 18 * pulse, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
   drawMonsters(now) {
     for (const monster of this.monsters.monsters) {
       ctx.save();
@@ -2176,16 +2268,17 @@ class Game {
     const key = SPRITE_SHEET.rects[monster.variant] ? monster.variant : "grunt";
     const width = monster.variant === "boss" ? monster.r * 2.7 : monster.r * 2.55;
     const height = monster.variant === "boss" ? monster.r * 1.8 : monster.r * 2.05;
-    const drawn = this.drawSpriteAsset(key, width, height, isFlashing);
+    const drawn = this.drawSpriteAsset(key, width, height, isFlashing, Math.PI);
     if (!drawn) return false;
     this.drawAttackWarning(monster, now);
     return true;
   }
 
-  drawSpriteAsset(key, width, height, isFlashing) {
+  drawSpriteAsset(key, width, height, isFlashing, rotation = 0) {
     const rect = SPRITE_SHEET.rects[key];
     if (!spriteSheetReady || !rect) return false;
     ctx.save();
+    if (rotation) ctx.rotate(rotation);
     if (isFlashing) {
       ctx.globalAlpha = 0.95;
       ctx.shadowColor = "#ffffff";
