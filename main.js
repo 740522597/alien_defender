@@ -79,6 +79,30 @@ const ENEMY_ATTACKS = {
   boss: { cooldown: 1350, damage: 6, speed: 230, radius: 8, color: "#ff5b7e", spread: 0.11, volley: 3 },
 };
 
+const SPRITE_SHEET = {
+  src: "./assets/alien_sprites.png",
+  rects: {
+    grunt: { x: 52, y: 70, w: 250, h: 170 },
+    fast: { x: 382, y: 64, w: 260, h: 192 },
+    charger: { x: 712, y: 70, w: 240, h: 196 },
+    tank: { x: 42, y: 382, w: 282, h: 204 },
+    dodger: { x: 382, y: 400, w: 278, h: 194 },
+    boss: { x: 30, y: 704, w: 314, h: 190 },
+    weapon: { x: 420, y: 710, w: 210, h: 184 },
+    health: { x: 742, y: 704, w: 210, h: 202 },
+  },
+};
+
+const spriteSheet = new Image();
+let spriteSheetReady = false;
+spriteSheet.onload = () => {
+  spriteSheetReady = true;
+};
+spriteSheet.onerror = () => {
+  spriteSheetReady = false;
+};
+spriteSheet.src = SPRITE_SHEET.src;
+
 const WEAPONS = {
   normal: {
     id: "normal",
@@ -2129,17 +2153,84 @@ class Game {
       ctx.translate(monster.x, monster.y);
       const isFlashing = now < (monster.flashUntil || 0);
       if (monster.type === "weapon") {
-        this.drawSupplyPod(monster, isFlashing, "weapon");
+        if (!this.drawSpriteAsset("weapon", monster.r * 2.5, monster.r * 2.15, isFlashing)) {
+          this.drawSupplyPod(monster, isFlashing, "weapon");
+        }
       } else if (monster.type === "health") {
-        this.drawSupplyPod(monster, isFlashing, "health");
+        if (!this.drawSpriteAsset("health", monster.r * 2.25, monster.r * 2.25, isFlashing)) {
+          this.drawSupplyPod(monster, isFlashing, "health");
+        }
       } else {
-        this.drawAlienShip(monster, isFlashing, now);
+        if (!this.drawAlienSprite(monster, isFlashing, now)) {
+          this.drawAlienShip(monster, isFlashing, now);
+        }
         if (monster.maxHp > 1) {
           this.drawEnemyHealthBar(monster);
         }
       }
       ctx.restore();
     }
+  }
+
+  drawAlienSprite(monster, isFlashing, now) {
+    const key = SPRITE_SHEET.rects[monster.variant] ? monster.variant : "grunt";
+    const width = monster.variant === "boss" ? monster.r * 2.7 : monster.r * 2.55;
+    const height = monster.variant === "boss" ? monster.r * 1.8 : monster.r * 2.05;
+    const drawn = this.drawSpriteAsset(key, width, height, isFlashing);
+    if (!drawn) return false;
+    this.drawAttackWarning(monster, now);
+    return true;
+  }
+
+  drawSpriteAsset(key, width, height, isFlashing) {
+    const rect = SPRITE_SHEET.rects[key];
+    if (!spriteSheetReady || !rect) return false;
+    ctx.save();
+    if (isFlashing) {
+      ctx.globalAlpha = 0.95;
+      ctx.shadowColor = "#ffffff";
+      ctx.shadowBlur = 18;
+    }
+    ctx.drawImage(
+      spriteSheet,
+      rect.x,
+      rect.y,
+      rect.w,
+      rect.h,
+      -width / 2,
+      -height / 2,
+      width,
+      height,
+    );
+    if (isFlashing) {
+      ctx.globalCompositeOperation = "source-atop";
+      ctx.fillStyle = "rgba(255, 255, 255, 0.45)";
+      ctx.fillRect(-width / 2, -height / 2, width, height);
+    }
+    ctx.restore();
+    return true;
+  }
+
+  drawAttackWarning(monster, now) {
+    if (!(monster.attackWarningUntil && now < monster.attackWarningUntil)) return;
+    const profile = monster.pendingAttackProfile || ENEMY_ATTACKS[monster.variant] || ENEMY_ATTACKS.grunt;
+    const left = clamp((monster.attackWarningUntil - now) / Math.max(1, profile.warningMs || 600), 0, 1);
+    const pulse = 1 - left;
+    ctx.save();
+    ctx.rotate(monster.pendingAttackAngle || Math.PI / 2);
+    ctx.strokeStyle = `rgba(255, 76, 76, ${0.28 + pulse * 0.5})`;
+    ctx.lineWidth = 2 + pulse * 3;
+    ctx.setLineDash([10, 8]);
+    ctx.beginPath();
+    ctx.moveTo(monster.r * 0.62, 0);
+    ctx.lineTo(this.height, 0);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = `rgba(255, 76, 76, ${0.35 + pulse * 0.4})`;
+    ctx.beginPath();
+    ctx.arc(monster.r * 0.52, 0, monster.r * (0.16 + pulse * 0.16), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
   }
 
   drawSupplyPod(monster, isFlashing, kind) {
@@ -2205,26 +2296,7 @@ class Game {
     ctx.strokeStyle = "rgba(0, 0, 0, 0.55)";
     ctx.fillStyle = bodyColor;
 
-    if (monster.attackWarningUntil && now < monster.attackWarningUntil) {
-      const profile = monster.pendingAttackProfile || ENEMY_ATTACKS[monster.variant] || ENEMY_ATTACKS.grunt;
-      const left = clamp((monster.attackWarningUntil - now) / Math.max(1, profile.warningMs || 600), 0, 1);
-      const pulse = 1 - left;
-      ctx.save();
-      ctx.rotate(monster.pendingAttackAngle || Math.PI / 2);
-      ctx.strokeStyle = `rgba(255, 76, 76, ${0.28 + pulse * 0.5})`;
-      ctx.lineWidth = 2 + pulse * 3;
-      ctx.setLineDash([10, 8]);
-      ctx.beginPath();
-      ctx.moveTo(r * 0.62, 0);
-      ctx.lineTo(this.height, 0);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.fillStyle = `rgba(255, 76, 76, ${0.35 + pulse * 0.4})`;
-      ctx.beginPath();
-      ctx.arc(r * 0.52, 0, r * (0.16 + pulse * 0.16), 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    }
+    this.drawAttackWarning(monster, now);
 
     if (monster.variant === "boss") {
       if (now < (monster.warningUntil || 0)) {

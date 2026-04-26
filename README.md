@@ -35,8 +35,11 @@ http://127.0.0.1:8899/
 index.html
 style.css
 main.js
+assets/alien_sprites.png
 README.md
 ```
+
+`assets/alien_sprites.png` 是 3x3 排版的敌舰精灵图，当前代码按以下位置裁切：侦察机、截击机、突击艇、重甲舰、飞碟、母舰、武器补给舱、医疗舱。缺少该文件时，游戏会使用 Canvas 绘制的旧外观。
 
 ## 常见问题
 
