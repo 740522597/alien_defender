@@ -37,12 +37,15 @@ style.css
 main.js
 assets/alien_sprites.png
 assets/player_weapon.png
+assets/weapon_package_enemy_missle.png
 README.md
 ```
 
 `assets/alien_sprites.png` 是 3x3 排版的敌舰精灵图，当前代码按以下位置裁切：侦察机、截击机、突击艇、重甲舰、飞碟、母舰、武器补给舱、医疗舱。缺少该文件时，游戏会使用 Canvas 绘制的旧外观。
 
 `assets/player_weapon.png` 是玩家炮塔精灵图。当前代码使用底部左侧底座作为固定层，并按武器类型裁切炮塔头，只有炮塔头会跟随瞄准方向旋转。缺少该文件时，游戏会使用 Canvas 绘制的旧炮塔外观。
+
+`assets/weapon_package_enemy_missle.png` 是武器包和敌弹精灵图。该图原始背景是浅色棋盘格，游戏加载后会自动把浅色格子处理成透明，再裁切 N/M/S/L/F/D 武器包和 6 种敌弹。
 
 ## 常见问题
 

@@ -126,6 +126,38 @@ playerWeaponSheet.onerror = () => {
 };
 playerWeaponSheet.src = PLAYER_WEAPON_SHEET.src;
 
+const WEAPON_MISSILE_SHEET = {
+  src: "./assets/weapon_package_enemy_missle.png",
+  packages: {
+    normal: { x: 198, y: 56, w: 292, h: 254 },
+    rapid: { x: 606, y: 56, w: 292, h: 254 },
+    spread: { x: 1024, y: 56, w: 292, h: 254 },
+    laser: { x: 198, y: 340, w: 292, h: 254 },
+    flame: { x: 606, y: 340, w: 292, h: 254 },
+    double: { x: 1024, y: 340, w: 292, h: 254 },
+  },
+  missiles: {
+    grunt: { x: 112, y: 646, w: 128, h: 284 },
+    fast: { x: 346, y: 646, w: 132, h: 284 },
+    charger: { x: 586, y: 646, w: 144, h: 284 },
+    tank: { x: 806, y: 642, w: 160, h: 288 },
+    dodger: { x: 1050, y: 646, w: 148, h: 284 },
+    boss: { x: 1268, y: 642, w: 176, h: 288 },
+  },
+};
+
+const weaponMissileSheet = new Image();
+let weaponMissileSheetReady = false;
+let weaponMissileCanvas = null;
+weaponMissileSheet.onload = () => {
+  weaponMissileCanvas = buildTransparentSpriteCanvas(weaponMissileSheet);
+  weaponMissileSheetReady = Boolean(weaponMissileCanvas);
+};
+weaponMissileSheet.onerror = () => {
+  weaponMissileSheetReady = false;
+};
+weaponMissileSheet.src = WEAPON_MISSILE_SHEET.src;
+
 const WEAPONS = {
   normal: {
     id: "normal",
@@ -326,6 +358,30 @@ function segmentMayHitCircle(start, end, circle, radius) {
     && circle.x <= Math.max(start.x, end.x) + radius
     && circle.y >= Math.min(start.y, end.y) - radius
     && circle.y <= Math.max(start.y, end.y) + radius;
+}
+
+function buildTransparentSpriteCanvas(image) {
+  const sheet = document.createElement("canvas");
+  sheet.width = image.naturalWidth || image.width;
+  sheet.height = image.naturalHeight || image.height;
+  const sheetCtx = sheet.getContext("2d", { willReadFrequently: true });
+  if (!sheetCtx || !sheet.width || !sheet.height) return null;
+  sheetCtx.drawImage(image, 0, 0);
+  const data = sheetCtx.getImageData(0, 0, sheet.width, sheet.height);
+  for (let i = 0; i < data.data.length; i += 4) {
+    const r = data.data[i];
+    const g = data.data[i + 1];
+    const b = data.data[i + 2];
+    const bright = (r + g + b) / 3;
+    const spread = Math.max(r, g, b) - Math.min(r, g, b);
+    if (bright > 226 && spread < 16) {
+      data.data[i + 3] = 0;
+    } else if (bright > 214 && spread < 20) {
+      data.data[i + 3] = Math.min(data.data[i + 3], 60);
+    }
+  }
+  sheetCtx.putImageData(data, 0, 0);
+  return sheet;
 }
 
 class SoundFx {
@@ -2245,7 +2301,7 @@ class Game {
       ctx.translate(monster.x, monster.y);
       const isFlashing = now < (monster.flashUntil || 0);
       if (monster.type === "weapon") {
-        if (!this.drawSpriteAsset("weapon", monster.r * 2.5, monster.r * 2.15, isFlashing)) {
+        if (!this.drawWeaponPackageSprite(monster, isFlashing) && !this.drawSpriteAsset("weapon", monster.r * 2.5, monster.r * 2.15, isFlashing)) {
           this.drawSupplyPod(monster, isFlashing, "weapon");
         }
       } else if (monster.type === "health") {
@@ -2262,6 +2318,12 @@ class Game {
       }
       ctx.restore();
     }
+  }
+
+  drawWeaponPackageSprite(monster, isFlashing) {
+    const weaponId = monster.weaponId || "normal";
+    const key = WEAPON_MISSILE_SHEET.packages[weaponId] ? weaponId : "normal";
+    return this.drawWeaponMissileAsset("packages", key, monster.r * 2.65, monster.r * 2.3, isFlashing);
   }
 
   drawAlienSprite(monster, isFlashing, now) {
@@ -2298,6 +2360,36 @@ class Game {
     if (isFlashing) {
       ctx.globalCompositeOperation = "source-atop";
       ctx.fillStyle = "rgba(255, 255, 255, 0.45)";
+      ctx.fillRect(-width / 2, -height / 2, width, height);
+    }
+    ctx.restore();
+    return true;
+  }
+
+  drawWeaponMissileAsset(group, key, width, height, isFlashing, rotation = 0) {
+    const rect = WEAPON_MISSILE_SHEET[group] && WEAPON_MISSILE_SHEET[group][key];
+    if (!weaponMissileSheetReady || !weaponMissileCanvas || !rect) return false;
+    ctx.save();
+    if (rotation) ctx.rotate(rotation);
+    if (isFlashing) {
+      ctx.globalAlpha = 0.95;
+      ctx.shadowColor = "#ffffff";
+      ctx.shadowBlur = 14;
+    }
+    ctx.drawImage(
+      weaponMissileCanvas,
+      rect.x,
+      rect.y,
+      rect.w,
+      rect.h,
+      -width / 2,
+      -height / 2,
+      width,
+      height,
+    );
+    if (isFlashing) {
+      ctx.globalCompositeOperation = "source-atop";
+      ctx.fillStyle = "rgba(255, 255, 255, 0.38)";
       ctx.fillRect(-width / 2, -height / 2, width, height);
     }
     ctx.restore();
@@ -2644,6 +2736,17 @@ class Game {
       const speed = Math.max(1, Math.hypot(bullet.vx, bullet.vy));
       const tx = bullet.vx / speed;
       const ty = bullet.vy / speed;
+      const angle = Math.atan2(bullet.vy, bullet.vx);
+      const spriteWidth = bullet.radius * (bullet.variant === "boss" ? 5.4 : bullet.variant === "tank" ? 5 : 4.2);
+      const spriteHeight = bullet.radius * (bullet.variant === "boss" ? 9.6 : bullet.variant === "tank" ? 9.2 : 8.4);
+      ctx.save();
+      ctx.translate(bullet.x, bullet.y);
+      if (this.drawWeaponMissileAsset("missiles", bullet.variant || "grunt", spriteWidth, spriteHeight, false, angle - Math.PI / 2)) {
+        ctx.restore();
+        continue;
+      }
+      ctx.restore();
+
       ctx.save();
       ctx.shadowColor = color;
       ctx.shadowBlur = bullet.variant === "boss" ? 10 : 6;
