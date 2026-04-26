@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Body Fight</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="./style.css?v=2026042652">
+  <link rel="stylesheet" href="./style.css?v=2026042665">
 </head>
 <body>
   <main class="app">
@@ -41,8 +41,8 @@
         <button id="fullscreenBtn" type="button">全屏</button>
         <button id="pauseBtn" type="button" disabled>暂停</button>
         <button id="restartBtn" type="button" disabled>重新开始</button>
-        <button id="recordStartBtn" type="button">开始录制</button>
-        <button id="recordStopBtn" type="button" disabled>停止并下载</button>
+        <button id="recordStartBtn" type="button" hidden>开始录制</button>
+        <button id="recordStopBtn" type="button" disabled hidden>停止并下载</button>
       </div>
 
       <section class="level-overlay" id="levelOverlay" hidden>
@@ -60,6 +60,6 @@
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
-  <script src="./main.js?v=2026042652"></script>
+  <script src="./main.js?v=2026042665"></script>
 </body>
 </html>

@@ -43,6 +43,20 @@ const recorderState = {
   mimeType: "video/webm",
 };
 
+function readDebugOptions() {
+  const params = new URLSearchParams(window.location.search);
+  if (!params.has("debug")) {
+    return { enabled: false, startLevel: 1, infiniteSpecial: false };
+  }
+  const debugValue = params.get("debug") || "1";
+  const levelValue = params.get("level") || params.get("stage") || (/^\d+$/.test(debugValue) ? debugValue : "1");
+  return {
+    enabled: debugValue !== "0" && debugValue !== "false",
+    startLevel: clamp(Number.parseInt(levelValue, 10) || 1, 1, GAME.maxLevel),
+    infiniteSpecial: true,
+  };
+}
+
 const CDN = {
   hands: "https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js",
   assets: "https://cdn.jsdelivr.net/npm/@mediapipe/hands/",
@@ -77,8 +91,8 @@ const GAME = {
   aimAssistRadius: 68,
   nearHitBonus: 14,
   specialCooldownMs: 30000,
-  specialDurationMs: 5000,
-  specialScoreAward: 100000,
+  specialDurationMs: 15000,
+  specialScoreAward: 10000,
   maxFighters: 5,
 };
 
@@ -296,12 +310,12 @@ const LEVEL_THEMES = [
   { name: "高速", bias: { grunt: 0.44, fast: 0.38, tank: 0.06, charger: 0.08, dodger: 0.04 }, hp: 0.95, speed: 1.08, weapon: 1, health: 1 },
   { name: "重甲", bias: { grunt: 0.42, fast: 0.1, tank: 0.36, charger: 0.08, dodger: 0.04 }, hp: 1.18, speed: 0.92, weapon: 1.12, health: 0.95 },
   { name: "突进", bias: { grunt: 0.36, fast: 0.16, tank: 0.12, charger: 0.28, dodger: 0.08 }, hp: 1.04, speed: 1.12, weapon: 1, health: 1 },
-  { name: "母舰 I", bias: { grunt: 0.42, fast: 0.22, tank: 0.16, charger: 0.1, dodger: 0.1 }, hp: 1.12, speed: 1.02, weapon: 1.15, health: 1.12 },
+  { name: "母舰 I", bias: { grunt: 0.5, fast: 0.2, tank: 0.12, charger: 0.08, dodger: 0.06 }, hp: 1.02, speed: 0.96, weapon: 1.04, health: 1.18 },
   { name: "补给", bias: { grunt: 0.46, fast: 0.22, tank: 0.14, charger: 0.1, dodger: 0.08 }, hp: 1.05, speed: 1.05, weapon: 1.5, health: 1.08 },
   { name: "闪避", bias: { grunt: 0.34, fast: 0.16, tank: 0.12, charger: 0.08, dodger: 0.3 }, hp: 1.08, speed: 1.12, weapon: 1.05, health: 0.98 },
   { name: "短缺", bias: { grunt: 0.38, fast: 0.2, tank: 0.18, charger: 0.16, dodger: 0.08 }, hp: 1.1, speed: 1.08, weapon: 0.92, health: 0.62 },
   { name: "混战", bias: { grunt: 0.3, fast: 0.2, tank: 0.2, charger: 0.18, dodger: 0.12 }, hp: 1.16, speed: 1.14, weapon: 1, health: 0.9 },
-  { name: "母舰 II", bias: { grunt: 0.24, fast: 0.22, tank: 0.22, charger: 0.18, dodger: 0.14 }, hp: 1.22, speed: 1.18, weapon: 1.12, health: 0.9 },
+  { name: "母舰 II", bias: { grunt: 0.34, fast: 0.22, tank: 0.18, charger: 0.14, dodger: 0.12 }, hp: 1.12, speed: 1.09, weapon: 1.04, health: 0.98 },
 ];
 
 const UPGRADES = [
@@ -328,6 +342,7 @@ function getLevelConfig(level, adaptive = {}) {
   const pressure = adaptive.pressure || 1;
   const help = adaptive.help || 1;
   const theme = LEVEL_THEMES[level - 1] || LEVEL_THEMES[LEVEL_THEMES.length - 1];
+  const bossRound = isBossLevel(level);
   return {
     level,
     theme,
@@ -337,11 +352,21 @@ function getLevelConfig(level, adaptive = {}) {
     speedJitter: 48 + level * 5,
     enemyHp: (18 + (level - 1) * 7) * theme.hp,
     enemyDamage: 6 + Math.floor((level - 1) * 2.4),
-    weaponChance: clamp((0.12 - t * 0.03) * theme.weapon, 0.06, 0.18),
-    healthChance: clamp((0.09 - t * 0.03) * help * theme.health, 0.035, 0.2),
+    weaponChance: clamp((0.12 - t * 0.03) * theme.weapon * (bossRound ? 1.45 : 1), 0.06, bossRound ? 0.28 : 0.18),
+    healthChance: clamp((0.09 - t * 0.03) * help * theme.health * (bossRound ? 1.25 : 1), 0.035, bossRound ? 0.24 : 0.2),
     eliteChance: clamp(0.04 + t * 0.24, 0.04, 0.28),
     maxMonsters: Math.round(GAME.maxMonsters * clamp(pressure, 0.82, 1.28)),
+    bossEnemyLimit: level === 5 ? 6 : level === 10 ? 8 : GAME.maxMonsters,
+    bossEnemyTotalLimit: level === 5 ? 30 : level === 10 ? 30 : Infinity,
+    bossSummonWave: level === 5 ? 10 : level === 10 ? 10 : 1,
+    bossMinionBurstMin: 2,
+    bossMinionBurstMax: 3,
+    bossMinionBurstInterval: level === 5 ? 1800 : level === 10 ? 1550 : 1800,
   };
+}
+
+function isBossLevel(level) {
+  return level === 5 || level === 10;
 }
 
 function randomDropWeapon(exclude = "normal") {
@@ -1150,53 +1175,43 @@ class MonsterManager {
     this.monsters = [];
     this.spawnTimer = 0;
     this.bossSpawnedLevel = 0;
+    this.bossEnemySpawned = 0;
   }
 
   reset() {
     this.monsters.length = 0;
     this.spawnTimer = 0;
     this.bossSpawnedLevel = 0;
+    this.bossEnemySpawned = 0;
   }
 
   update(dt, width, height, levelConfig, onReachPlayer) {
-    if ((levelConfig.level === 5 || levelConfig.level === 10) && this.bossSpawnedLevel !== levelConfig.level) {
+    const bossRound = isBossLevel(levelConfig.level);
+    if (bossRound && this.bossSpawnedLevel !== levelConfig.level) {
       this.spawnBoss(width, height, levelConfig);
       this.bossSpawnedLevel = levelConfig.level;
     }
 
     this.spawnTimer -= dt;
     if (this.spawnTimer <= 0 && this.monsters.length < levelConfig.maxMonsters) {
-      this.spawn(width, height, levelConfig);
-      this.spawnTimer = levelConfig.spawnEvery + Math.random() * levelConfig.spawnJitter;
+      const enemyCount = this.countActiveEnemies();
+      const supportType = this.chooseSupportDropType(levelConfig);
+      if (!bossRound && enemyCount < levelConfig.bossEnemyLimit) {
+        this.spawn(width, height, levelConfig);
+      } else if (supportType) {
+        this.spawn(width, height, levelConfig, supportType);
+      }
+      const intervalMultiplier = bossRound ? 1.55 : 1;
+      this.spawnTimer = (levelConfig.spawnEvery + Math.random() * levelConfig.spawnJitter) * intervalMultiplier;
     }
 
     for (const monster of this.monsters) {
       if (monster.dead) continue;
       if (monster.variant === "boss") {
         const hpRatio = monster.hp / monster.maxHp;
-        const phaseBoost = hpRatio < 0.2 ? 1.75 : hpRatio < 0.4 ? 1.38 : hpRatio < 0.7 ? 1.16 : 1;
-        monster.phaseTime += dt;
-        monster.x += Math.sin(monster.phaseTime * monster.swaySpeed * phaseBoost) * monster.swayWidth * phaseBoost * dt;
-        monster.y += monster.vy * dt * (monster.y < height * 0.2 ? 1 : 0.35);
-        monster.x = clamp(monster.x, monster.r + 12, width - monster.r - 12);
-        if (monster.summonCooldown > 0) monster.summonCooldown -= dt;
-        if (monster.summonCooldown <= 0 && this.monsters.length < levelConfig.maxMonsters) {
-          this.spawnMinion(width, height, levelConfig, monster);
-          monster.summonCooldown = (3.4 - Math.min(1.2, levelConfig.level * 0.08)) / phaseBoost;
-        }
-        if (hpRatio < 0.2 && !monster.desperationUsed) {
-          monster.desperationUsed = true;
-          monster.warningUntil = performance.now() + 900;
-          const target = this.getPlayerSideTarget(width, height);
-          monster.desperationTarget = target;
-          const angle = Math.atan2(target.y - monster.y, target.x - monster.x);
-          monster.vx = Math.cos(angle) * levelConfig.speedBase * 1.8;
-          monster.vy = Math.sin(angle) * levelConfig.speedBase * 1.8;
-        }
-        if (monster.desperationUsed && performance.now() > monster.warningUntil) {
-          monster.x += monster.vx * dt;
-          monster.y += monster.vy * dt;
-        }
+        this.updateBossMovement(monster, dt, width, height, levelConfig);
+        this.updateBossHealthWaves(monster, width, height, levelConfig, hpRatio);
+        this.updateBossMinionQueue(monster, width, height, levelConfig);
       } else if (monster.variant === "dodger") {
         monster.phaseTime += dt;
         monster.x += (monster.vx + Math.sin(monster.phaseTime * 5.5) * 48) * dt;
@@ -1219,14 +1234,103 @@ class MonsterManager {
     });
   }
 
-  spawn(width, height, levelConfig) {
+  countActiveEnemies() {
+    return this.monsters.filter((monster) => monster.type === "enemy" && monster.variant !== "boss" && !monster.dead && !monster.reached).length;
+  }
+
+  updateBossMovement(monster, dt, width, height, levelConfig) {
+    const now = performance.now();
+    const top = Math.max(monster.r + 18, height * 0.08);
+    const bottom = Math.max(top + 8, height * 0.5 - monster.r - 8);
+    const left = monster.r + 24;
+    const right = width - monster.r - 24;
+    const needTarget = !monster.moveTarget
+      || now >= monster.retargetAt
+      || distance(monster, monster.moveTarget) < 26;
+    if (needTarget) {
+      monster.moveTarget = {
+        x: left + Math.random() * Math.max(1, right - left),
+        y: top + Math.random() * Math.max(1, bottom - top),
+      };
+      monster.retargetAt = now + 1400 + Math.random() * 1700;
+    }
+    const dx = monster.moveTarget.x - monster.x;
+    const dy = monster.moveTarget.y - monster.y;
+    const dist = Math.max(1, Math.hypot(dx, dy));
+    const speed = (levelConfig.level === 10 ? 82 : 68) * (monster.hp / monster.maxHp < 0.4 ? 1.14 : 1);
+    monster.x += (dx / dist) * speed * dt;
+    monster.y += (dy / dist) * speed * dt;
+    monster.x = clamp(monster.x, left, right);
+    monster.y = clamp(monster.y, -monster.r, bottom);
+  }
+
+  updateBossHealthWaves(monster, width, height, levelConfig, hpRatio) {
+    if (hpRatio < 0.8 && !monster.wave80Spawned) {
+      monster.wave80Spawned = true;
+      this.enqueueBossMinionWave(monster, levelConfig.bossSummonWave);
+    }
+    if (hpRatio < 2 / 3 && !monster.wave66Spawned) {
+      monster.wave66Spawned = true;
+      this.enqueueBossMinionWave(monster, levelConfig.bossSummonWave);
+    }
+    if (hpRatio < 1 / 3 && !monster.wave33Spawned) {
+      monster.wave33Spawned = true;
+      this.enqueueBossMinionWave(monster, levelConfig.bossSummonWave);
+    }
+  }
+
+  enqueueBossMinionWave(boss, count) {
+    const now = performance.now();
+    boss.minionQueue = (boss.minionQueue || 0) + count;
+    boss.nextMinionBurstAt = Math.min(boss.nextMinionBurstAt || now + 300, now + 300);
+  }
+
+  updateBossMinionQueue(boss, width, height, levelConfig) {
+    const now = performance.now();
+    if (!boss.minionQueue || now < (boss.nextMinionBurstAt || 0)) return;
+    const totalLeft = Math.max(0, levelConfig.bossEnemyTotalLimit - this.bossEnemySpawned);
+    const activeRoom = Math.max(0, levelConfig.bossEnemyLimit - this.countActiveEnemies());
+    const canvasRoom = Math.max(0, levelConfig.maxMonsters - this.monsters.length);
+    const maxBurst = Math.max(levelConfig.bossMinionBurstMin, levelConfig.bossMinionBurstMax);
+    const burstRoll = levelConfig.bossMinionBurstMin + Math.floor(Math.random() * (maxBurst - levelConfig.bossMinionBurstMin + 1));
+    const burstSize = Math.min(boss.minionQueue, totalLeft, activeRoom, canvasRoom, burstRoll);
+    if (burstSize <= 0) {
+      boss.nextMinionBurstAt = now + 900;
+      return;
+    }
+    for (let i = 0; i < burstSize; i += 1) {
+      const spawnIndex = boss.minionSpawnIndex || 0;
+      this.spawnMinion(width, height, levelConfig, boss, spawnIndex, burstSize);
+      boss.minionSpawnIndex = spawnIndex + 1;
+    }
+    boss.minionQueue -= burstSize;
+    boss.nextMinionBurstAt = now + levelConfig.bossMinionBurstInterval * (0.85 + Math.random() * 0.3);
+  }
+
+  canSpawnBossEnemy(levelConfig) {
+    return !isBossLevel(levelConfig.level) || this.bossEnemySpawned < levelConfig.bossEnemyTotalLimit;
+  }
+
+  registerBossEnemySpawn(levelConfig, type) {
+    if (isBossLevel(levelConfig.level) && type === "enemy") {
+      this.bossEnemySpawned += 1;
+    }
+  }
+
+  chooseSupportDropType(levelConfig) {
     const roll = Math.random();
-    const type = roll < levelConfig.weaponChance ? "weapon" : roll < levelConfig.weaponChance + levelConfig.healthChance ? "health" : "enemy";
-    const fromLeftFront = Math.random() < 0.5;
-    const start = {
-      x: width * (fromLeftFront ? 0.08 + Math.random() * 0.3 : 0.62 + Math.random() * 0.3),
-      y: -42,
-    };
+    if (roll < levelConfig.weaponChance) return "weapon";
+    if (roll < levelConfig.weaponChance + levelConfig.healthChance) return "health";
+    return null;
+  }
+
+  spawn(width, height, levelConfig, forcedType = null) {
+    const roll = Math.random();
+    let type = forcedType || (roll < levelConfig.weaponChance ? "weapon" : roll < levelConfig.weaponChance + levelConfig.healthChance ? "health" : "enemy");
+    if (type === "enemy" && !this.canSpawnBossEnemy(levelConfig)) {
+      type = this.chooseSupportDropType(levelConfig) || "weapon";
+    }
+    const start = this.getSpawnStart(width, height, levelConfig);
     const target = this.getPlayerSideTarget(width, height);
     const angle = Math.atan2(target.y - start.y, target.x - start.x);
     const variant = this.chooseEnemyVariant(levelConfig);
@@ -1260,8 +1364,23 @@ class MonsterManager {
       color,
       flashUntil: 0,
       label: type === "enemy" ? variant.label : "",
-      nextAttackAt: performance.now() + 700 + Math.random() * 1300,
+      nextAttackAt: performance.now() + (isBossLevel(levelConfig.level) ? 1100 : 700) + Math.random() * 1300,
     });
+    this.registerBossEnemySpawn(levelConfig, type);
+  }
+
+  getSpawnStart(width, height, levelConfig) {
+    const fromLeftFront = Math.random() < 0.5;
+    if (isBossLevel(levelConfig.level)) {
+      return {
+        x: width * (fromLeftFront ? 0.02 + Math.random() * 0.22 : 0.76 + Math.random() * 0.22),
+        y: -70 + Math.random() * height * 0.12,
+      };
+    }
+    return {
+      x: width * (fromLeftFront ? 0.08 + Math.random() * 0.3 : 0.62 + Math.random() * 0.3),
+      y: -42,
+    };
   }
 
   chooseEnemyVariant(levelConfig) {
@@ -1289,37 +1408,49 @@ class MonsterManager {
 
   spawnBoss(width, height, levelConfig) {
     const bossLevel = levelConfig.level === 10 ? 2 : 1;
-    const hp = Math.round(levelConfig.enemyHp * (bossLevel === 2 ? 24 : 15));
+    const hp = Math.round(levelConfig.enemyHp * (bossLevel === 2 ? 46 : 34));
     this.monsters.push({
       type: "enemy",
       variant: "boss",
       x: width / 2,
       y: -80,
       vx: 0,
-      vy: 24 + levelConfig.level * 1.6,
+      vy: 0,
       r: bossLevel === 2 ? 78 : 64,
       hp,
       maxHp: hp,
-      damage: Math.round(levelConfig.enemyDamage * (bossLevel === 2 ? 3.4 : 2.6)),
-      score: bossLevel === 2 ? 2400 : 1400,
+      damageTakenMultiplier: bossLevel === 2 ? 0.58 : 0.68,
+      fighterDamageTakenMultiplier: bossLevel === 2 ? 0.5 : 0.56,
+      damage: Math.round(levelConfig.enemyDamage * (bossLevel === 2 ? 2.75 : 2.15)),
+      score: bossLevel === 2 ? 5200 : 3200,
       phaseTime: 0,
-      swaySpeed: bossLevel === 2 ? 1.45 : 1.15,
-      swayWidth: bossLevel === 2 ? 58 : 42,
-      summonCooldown: 2.2,
+      swaySpeed: bossLevel === 2 ? 1.25 : 1.15,
+      swayWidth: bossLevel === 2 ? 48 : 42,
+      moveTarget: { x: width / 2, y: height * 0.18 },
+      retargetAt: performance.now() + 1600,
       dead: false,
       reached: false,
       color: bossLevel === 2 ? "#ff5b7e" : "#d89cff",
       flashUntil: 0,
       label: bossLevel === 2 ? "母舰 II" : "母舰",
       warningUntil: 0,
-      desperationUsed: false,
+      wave80Spawned: false,
+      wave66Spawned: false,
+      wave33Spawned: false,
+      minionQueue: 0,
+      minionSpawnIndex: 0,
+      nextMinionBurstAt: 0,
       nextAttackAt: performance.now() + 900,
     });
   }
 
-  spawnMinion(width, height, levelConfig, boss) {
-    const side = Math.random() < 0.5 ? -1 : 1;
-    const start = { x: boss.x + side * (boss.r + 28), y: boss.y + boss.r * 0.3 };
+  spawnMinion(width, height, levelConfig, boss, index = 0, total = 1) {
+    const spawnAngle = -Math.PI / 2 + (index - (total - 1) / 2) * 0.22 + (Math.random() - 0.5) * 0.2;
+    const spread = boss.r * (0.24 + Math.random() * 0.28);
+    const start = {
+      x: clamp(boss.x + Math.cos(spawnAngle) * spread, 24, width - 24),
+      y: clamp(boss.y + Math.sin(spawnAngle) * spread + boss.r * 0.08, -height * 0.12, height * 0.48),
+    };
     const target = this.getPlayerSideTarget(width, height);
     const angle = Math.atan2(target.y - start.y, target.x - start.x);
     const speed = levelConfig.speedBase * 1.08;
@@ -1344,6 +1475,7 @@ class MonsterManager {
       label: "截",
       nextAttackAt: performance.now() + 500 + Math.random() * 850,
     });
+    this.registerBossEnemySpawn(levelConfig, "enemy");
   }
 
   getPlayerSideTarget(width, height) {
@@ -1396,6 +1528,7 @@ class Game {
     this.pendingUpgradeChoices = [];
     this.pendingNextLevel = 1;
     this.difficulty = ui.difficultySelect ? ui.difficultySelect.value : "normal";
+    this.debugOptions = readDebugOptions();
     this.calibrationMode = "newGame";
     this.calibrationPreviousPhase = "idle";
     this.weaponBanner = null;
@@ -1583,7 +1716,8 @@ class Game {
     this.combo = 0;
     this.bestCombo = 0;
     this.hideLevelOverlay();
-    this.startLevel(1);
+    this.specialNextReadyAt = 0;
+    this.startLevel(this.debugOptions.enabled ? this.debugOptions.startLevel : 1);
   }
 
   beginCalibration(mode = "newGame") {
@@ -1681,7 +1815,7 @@ class Game {
   startLevel(level) {
     this.updateDifficulty();
     this.level = level;
-    this.timeLeft = this.getRoundSeconds();
+    this.timeLeft = isBossLevel(level) ? 0 : this.getRoundSeconds();
     this.levelStartScore = this.score;
     this.levelKills = 0;
     this.levelDamageTaken = 0;
@@ -1708,11 +1842,11 @@ class Game {
     ui.pauseBtn.disabled = false;
     ui.restartBtn.disabled = false;
     const theme = LEVEL_THEMES[this.level - 1] || LEVEL_THEMES[0];
-    ui.notice.textContent = (this.level === 5 || this.level === 10)
-      ? `第 ${this.level} 关开始。母舰已出现，优先压低它的血量。`
+    ui.notice.textContent = isBossLevel(this.level)
+      ? `第 ${this.level} 关开始。击毁母舰才能过关。`
       : `第 ${this.level} 关：${theme.name}。击中武器包可临时切换武器。`;
     this.sound.level();
-    if (this.level === 5 || this.level === 10) this.sound.boss();
+    if (isBossLevel(this.level)) this.sound.boss();
   }
 
   finishGameOver(message) {
@@ -2060,9 +2194,10 @@ class Game {
       ui.summaryCountdown.textContent = `请选择一个升级后进入第 ${this.pendingNextLevel} 关`;
     }
 
-    if (this.phase === "playing" && !this.paused && this.health > 0 && this.timeLeft > 0) {
-      this.timeLeft = Math.max(0, this.timeLeft - dt);
-      if (this.timeLeft === 0) {
+    const bossRound = isBossLevel(this.level);
+    if (this.phase === "playing" && !this.paused && this.health > 0 && (this.timeLeft > 0 || bossRound)) {
+      if (!bossRound) this.timeLeft = Math.max(0, this.timeLeft - dt);
+      if (!bossRound && this.timeLeft === 0) {
         this.completeLevel(now);
         this.render(now);
         this.updateHud();
@@ -2134,9 +2269,13 @@ class Game {
     const base = ENEMY_ATTACKS[monster.variant] || ENEMY_ATTACKS.grunt;
     const difficulty = this.getEnemyAttackDifficulty();
     const levelBoost = 1 + (levelConfig.level - 1) * 0.045;
+    const bossAttackEase = monster.variant === "boss"
+      ? levelConfig.level === 5 ? 1.25 : levelConfig.level === 10 ? 1.15 : 1
+      : 1;
+    const firstBossDamage = monster.variant === "boss" && levelConfig.level === 5 ? 0.82 : 1;
     return {
-      cooldown: Math.max(420, base.cooldown * difficulty.cooldown * clamp(1.05 - levelConfig.level * 0.018, 0.78, 1.05)),
-      damage: Math.max(1, Math.round((base.damage + (levelConfig.level - 1) * 0.32) * difficulty.damage * levelBoost)),
+      cooldown: Math.max(420, base.cooldown * difficulty.cooldown * clamp(1.05 - levelConfig.level * 0.018, 0.78, 1.05) * bossAttackEase),
+      damage: Math.max(1, Math.round((base.damage + (levelConfig.level - 1) * 0.32) * difficulty.damage * levelBoost * firstBossDamage)),
       speed: base.speed * difficulty.speed * (1 + levelConfig.level * 0.014),
       radius: base.radius,
       color: base.color,
@@ -2396,6 +2535,12 @@ class Game {
   }
 
   tryActivateSpecial(now) {
+    if (this.debugOptions.infiniteSpecial) {
+      this.specialNextReadyAt = 0;
+      this.resetSpecialGestureState();
+      this.spawnFighterSquad(now);
+      return true;
+    }
     if (this.specialCharges <= 0) {
       ui.notice.textContent = "特殊技能次数不足。";
       this.spawnFloatingText(this.width / 2, this.height * 0.42, "技能次数不足", "#aeb9c2");
@@ -2438,6 +2583,10 @@ class Game {
         lastShotAt: now - i * 60,
         spriteIndex: i % FRIEND_PLANE_SHEET.rects.length,
         phase: i * 0.9,
+        formationOffsetX: offset * 0.9,
+        hoverDistance: 96 + i * 18,
+        orbitRadius: 36 + i * 10,
+        targetBias: i - (count - 1) / 2,
         dead: false,
       });
     }
@@ -2459,10 +2608,13 @@ class Game {
       fighter.prevX = fighter.x;
       fighter.prevY = fighter.y;
       if (target) {
-        const hoverDistance = 118 + Math.sin(now * 0.004 + fighter.phase) * 26;
+        const hoverDistance = fighter.hoverDistance + Math.sin(now * 0.0037 + fighter.phase) * 22;
+        const orbitX = Math.sin(now * 0.0028 + fighter.phase) * fighter.orbitRadius;
+        const orbitY = Math.cos(now * 0.0032 + fighter.phase) * 18;
+        const topLimit = this.height * 0.5;
         const desired = {
-          x: clamp(target.x + Math.sin(now * 0.003 + fighter.phase) * 76, 42, this.width - 42),
-          y: clamp(target.y + hoverDistance, this.height * 0.14, this.getDefenseLineY() - 42),
+          x: clamp(target.x + fighter.formationOffsetX + orbitX, 42, this.width - 42),
+          y: clamp(target.y + hoverDistance + orbitY, topLimit, this.getDefenseLineY() - 42),
         };
         const dx = desired.x - fighter.x;
         const dy = desired.y - fighter.y;
@@ -2478,13 +2630,13 @@ class Game {
           this.fireFromFighter(fighter, target, weapon, now);
         }
       } else {
-        fighter.vx += (this.width / 2 - fighter.x) * dt * 2.5;
-        fighter.vy += (-230 - fighter.vy) * dt * 3.2;
+        fighter.vx += (this.width / 2 + fighter.formationOffsetX - fighter.x) * dt * 2.5;
+        fighter.vy += (this.height * 0.56 + Math.sin(now * 0.002 + fighter.phase) * 28 - fighter.y) * dt * 2.8;
       }
       fighter.vx *= 0.94;
       fighter.vy *= 0.94;
       fighter.x = clamp(fighter.x + fighter.vx * dt, 32, this.width - 32);
-      fighter.y = clamp(fighter.y + fighter.vy * dt, this.height * 0.12, this.getDefenseLineY() - 26);
+      fighter.y = clamp(fighter.y + fighter.vy * dt, this.height * 0.5, this.getDefenseLineY() - 26);
     }
     this.fighters = this.fighters.filter((fighter) => !fighter.dead);
   }
@@ -2495,7 +2647,8 @@ class Game {
       if (monster.dead || monster.type !== "enemy") continue;
       const dist = distance(fighter, monster);
       const forward = monster.y * 0.42;
-      const score = dist - forward;
+      const sidePreference = Math.abs((monster.x - this.width / 2) - fighter.targetBias * this.width * 0.12);
+      const score = dist - forward + sidePreference * 0.18 + Math.sin(monster.x * 0.013 + fighter.phase) * 18;
       if (!best || score < best.score) best = { monster, score };
     }
     return best ? best.monster : null;
@@ -2767,7 +2920,12 @@ class Game {
       return;
     }
 
-    const actualDamage = Math.round(bullet.damage * (target.variant === "boss" ? this.playerMods.bossDamageMultiplier : 1));
+    let damageMultiplier = target.variant === "boss" ? this.playerMods.bossDamageMultiplier : 1;
+    if (target.variant === "boss") {
+      damageMultiplier *= target.damageTakenMultiplier || 0.58;
+      if (bullet.handId === "Fighter") damageMultiplier *= target.fighterDamageTakenMultiplier || 0.46;
+    }
+    const actualDamage = Math.max(1, Math.round(bullet.damage * damageMultiplier));
     target.hp -= actualDamage;
     target.flashUntil = now + 90;
     this.spawnHitParticles(x, y, bullet.color || target.color);
@@ -2780,16 +2938,19 @@ class Game {
       for (const other of this.monsters.monsters) {
         if (other === target || other.dead || other.type !== "enemy") continue;
         if (distance(other, { x, y }) <= bullet.splashRadius + other.r) {
-          other.hp -= Math.round(bullet.damage * 0.45);
+          const splashDefense = other.variant === "boss" ? (other.damageTakenMultiplier || 0.58) * 0.55 : 1;
+          other.hp -= Math.max(1, Math.round(bullet.damage * 0.45 * splashDefense));
           this.spawnHitParticles(other.x, other.y, bullet.color);
         }
       }
     }
 
     const killed = [target, ...this.monsters.monsters.filter((monster) => monster !== target && monster.type === "enemy" && monster.hp <= 0 && !monster.dead)];
+    let defeatedBoss = null;
     for (const monster of killed) {
       if (monster.dead || monster.hp > 0) continue;
       monster.dead = true;
+      if (monster.variant === "boss") defeatedBoss = monster;
       const killScore = monster.score || 100;
       this.addScore(killScore, { x: monster.x, y: monster.y }, "#f6c84c", `击毁 +${killScore}`);
       this.levelKills += 1;
@@ -2806,7 +2967,23 @@ class Game {
       if (monster.variant === "boss") this.sound.boss();
       else this.sound.kill();
     }
+    if (defeatedBoss && isBossLevel(this.level)) {
+      this.finishBossLevel(defeatedBoss, now);
+      return;
+    }
     this.sound.hit();
+  }
+
+  finishBossLevel(boss, now) {
+    for (const monster of this.monsters.monsters) {
+      if (monster === boss || monster.dead || monster.type !== "enemy") continue;
+      monster.dead = true;
+      this.spawnExplosion(monster.x, monster.y, monster.color, monster.variant === "tank" ? 28 : 20);
+    }
+    this.enemyBullets.length = 0;
+    this.screenShake = Math.max(this.screenShake, 18);
+    ui.notice.textContent = "母舰已击毁，敌方舰队瓦解。";
+    this.completeLevel(now);
   }
 
   handleEnemyBulletIntercept(target, bullet, x, y) {
@@ -2870,7 +3047,7 @@ class Game {
     setText(ui.score, String(Math.round(this.displayScore === undefined ? this.score : this.displayScore)));
     setText(ui.health, `${this.health}/${this.getMaxHealth()}`);
     setText(ui.shieldState, `${Math.ceil(this.shield)}/${GAME.maxShield}`);
-    setText(ui.timeLeft, String(Math.ceil(this.timeLeft)));
+    setText(ui.timeLeft, isBossLevel(this.level) && this.phase === "playing" ? "无计时" : String(Math.ceil(this.timeLeft)));
     setText(ui.weaponState, `${weapon.label}${remain}`);
     this.updateSpecialSlot(performance.now());
     setText(ui.comboState, String(this.combo));
@@ -2878,20 +3055,22 @@ class Game {
 
   updateSpecialSlot(now) {
     const cooldown = Math.max(0, this.specialNextReadyAt - now);
-    const cooling = cooldown > 0;
+    const infiniteSpecial = this.debugOptions && this.debugOptions.infiniteSpecial;
+    const cooling = !infiniteSpecial && cooldown > 0;
     const active = this.fighters.length > 0;
     if (ui.specialSlot) {
       ui.specialSlot.classList.toggle("is-cooling", cooling);
-      ui.specialSlot.classList.toggle("is-active", active);
-      ui.specialSlot.classList.toggle("is-empty", this.specialCharges <= 0);
+      ui.specialSlot.classList.toggle("is-active", active || infiniteSpecial);
+      ui.specialSlot.classList.toggle("is-empty", !infiniteSpecial && this.specialCharges <= 0);
     }
-    setText(ui.specialState, `×${this.specialCharges}`);
+    setText(ui.specialState, infiniteSpecial ? "∞" : `×${this.specialCharges}`);
     setText(ui.specialCooldownState, cooling ? `${Math.ceil(cooldown / 1000)}s` : "");
   }
 
   getSpecialHudText(now) {
     const cooldown = Math.max(0, this.specialNextReadyAt - now);
     const active = this.fighters.length > 0 ? ` 战机${this.fighters.length}` : "";
+    if (this.debugOptions && this.debugOptions.infiniteSpecial) return `∞${active}`;
     if (this.specialGestureCount > 0 && this.specialGestureDeadline > now) {
       return `${this.specialCharges} 次 技能${this.specialGestureCount}/3 ${Math.ceil((this.specialGestureDeadline - now) / 1000)}s${active}`;
     }

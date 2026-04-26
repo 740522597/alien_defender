@@ -242,7 +242,7 @@ button:not(:disabled):hover {
   right: 18px;
   top: 18px;
   display: grid;
-  grid-template-columns: 92px 142px repeat(3, 92px) 104px 112px;
+  grid-template-columns: 92px 142px repeat(3, 92px);
   gap: 8px;
 }
 
