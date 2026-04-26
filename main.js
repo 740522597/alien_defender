@@ -6,15 +6,18 @@ const ctx = canvas.getContext("2d");
 const stage = document.getElementById("stage");
 
 const ui = {
+  scoreFxLayer: document.getElementById("scoreFxLayer"),
   levelState: document.getElementById("levelState"),
   score: document.getElementById("score"),
   health: document.getElementById("health"),
   shieldState: document.getElementById("shieldState"),
   timeLeft: document.getElementById("timeLeft"),
   weaponState: document.getElementById("weaponState"),
+  specialSlot: document.getElementById("specialSlot"),
+  specialState: document.getElementById("specialState"),
+  specialCooldownState: document.getElementById("specialCooldownState"),
   comboState: document.getElementById("comboState"),
-  bestState: document.getElementById("bestState"),
-  trackingState: document.getElementById("trackingState"),
+  specialSlotIcon: document.getElementById("specialSlotIcon"),
   notice: document.getElementById("notice"),
   startBtn: document.getElementById("startBtn"),
   difficultySelect: document.getElementById("difficultySelect"),
@@ -22,12 +25,22 @@ const ui = {
   calibrateBtn: document.getElementById("calibrateBtn"),
   pauseBtn: document.getElementById("pauseBtn"),
   restartBtn: document.getElementById("restartBtn"),
+  recordStartBtn: document.getElementById("recordStartBtn"),
+  recordStopBtn: document.getElementById("recordStopBtn"),
   levelOverlay: document.getElementById("levelOverlay"),
   summaryTitle: document.getElementById("summaryTitle"),
   summaryStats: document.getElementById("summaryStats"),
   summaryCountdown: document.getElementById("summaryCountdown"),
   upgradeChoices: document.getElementById("upgradeChoices"),
   nextLevelBtn: document.getElementById("nextLevelBtn"),
+};
+
+const recorderState = {
+  recorder: null,
+  chunks: [],
+  stream: null,
+  isRecording: false,
+  mimeType: "video/webm",
 };
 
 const CDN = {
@@ -40,7 +53,7 @@ const GAME = {
   playerRadius: 82,
   maxLevel: 10,
   maxHealth: 100,
-  maxShield: 30,
+  maxShield: 100,
   shieldRecoverDelayMs: 2000,
   shieldRecoverPerSecond: 11,
   roundSeconds: 180,
@@ -59,9 +72,22 @@ const GAME = {
   maxEnemyBullets: 80,
   maxParticles: 380,
   maxFloatingTexts: 60,
+  maxScoreEffects: 48,
   comboWindowMs: 1800,
   aimAssistRadius: 68,
   nearHitBonus: 14,
+  specialCooldownMs: 30000,
+  specialDurationMs: 5000,
+  specialScoreAward: 100000,
+  maxFighters: 5,
+};
+
+const DEBUG_TURRET_PIVOT = false;
+const TURRET_PIVOT_CONFIG = {
+  gunPivotXRatio: 0.5,
+  gunPivotYRatio: 0.72,
+  gunOffsetX: 0,
+  gunOffsetY: 0,
 };
 
 const DIFFICULTY_ENEMY_ATTACK = {
@@ -105,26 +131,58 @@ spriteSheet.src = SPRITE_SHEET.src;
 
 const PLAYER_WEAPON_SHEET = {
   src: "./assets/player_weapon.png",
-  base: { x: 54, y: 1242, w: 268, h: 170 },
-  turrets: {
-    normal: { x: 430, y: 64, w: 160, h: 270, drawW: 58, drawH: 112 },
-    rapid: { x: 418, y: 462, w: 190, h: 214, drawW: 70, drawH: 96 },
-    spread: { x: 744, y: 452, w: 150, h: 218, drawW: 74, drawH: 98 },
-    laser: { x: 120, y: 820, w: 164, h: 250, drawW: 70, drawH: 108 },
-    flame: { x: 442, y: 820, w: 160, h: 250, drawW: 72, drawH: 108 },
-    double: { x: 744, y: 830, w: 220, h: 238, drawW: 84, drawH: 108 },
+  base: { x: 54, y: 132, w: 214, h: 170, drawW: 126, drawH: 100 },
+  guns: {
+    normal: { x: 52, y: 464, w: 186, h: 252, drawW: 126, drawH: 170, muzzle: 128 },
+    rapid: { x: 292, y: 466, w: 196, h: 252, drawW: 132, drawH: 170, muzzle: 126 },
+    spread: { x: 532, y: 466, w: 196, h: 252, drawW: 132, drawH: 170, muzzle: 122 },
+    laser: { x: 772, y: 460, w: 196, h: 258, drawW: 132, drawH: 174, muzzle: 132 },
+    flame: { x: 1012, y: 466, w: 220, h: 254, drawW: 148, drawH: 170, muzzle: 124 },
+    double: { x: 1252, y: 466, w: 220, h: 254, drawW: 148, drawH: 170, muzzle: 124 },
   },
 };
 
 const playerWeaponSheet = new Image();
 let playerWeaponSheetReady = false;
+const playerWeaponSprites = {
+  base: null,
+  guns: {},
+};
 playerWeaponSheet.onload = () => {
+  buildPlayerWeaponSprites(playerWeaponSheet);
   playerWeaponSheetReady = true;
 };
 playerWeaponSheet.onerror = () => {
   playerWeaponSheetReady = false;
 };
 playerWeaponSheet.src = PLAYER_WEAPON_SHEET.src;
+
+const FRIEND_PLANE_SHEET = {
+  src: "./assets/friend_planes.png",
+  cellW: 512,
+  cellH: 512,
+  rects: [
+    { x: 0, y: 0, w: 512, h: 512, color: "#56d5e2" },
+    { x: 512, y: 0, w: 512, h: 512, color: "#ff6d4a" },
+    { x: 1024, y: 0, w: 512, h: 512, color: "#f6c84c" },
+    { x: 0, y: 512, w: 512, h: 512, color: "#8be36f" },
+    { x: 512, y: 512, w: 512, h: 512, color: "#b68cff" },
+    { x: 1024, y: 512, w: 512, h: 512, color: "#6bf2ff" },
+  ],
+};
+
+const friendPlaneSheet = new Image();
+let friendPlaneSheetReady = false;
+let friendPlaneCanvas = null;
+friendPlaneSheet.onload = () => {
+  friendPlaneCanvas = buildTransparentSpriteCanvas(friendPlaneSheet);
+  friendPlaneSheetReady = Boolean(friendPlaneCanvas);
+  updateSpecialSlotIcon();
+};
+friendPlaneSheet.onerror = () => {
+  friendPlaneSheetReady = false;
+};
+friendPlaneSheet.src = FRIEND_PLANE_SHEET.src;
 
 const WEAPON_MISSILE_SHEET = {
   src: "./assets/weapon_package_enemy_missle.png",
@@ -137,12 +195,12 @@ const WEAPON_MISSILE_SHEET = {
     double: { x: 1024, y: 340, w: 292, h: 254 },
   },
   missiles: {
-    grunt: { x: 112, y: 646, w: 128, h: 284 },
-    fast: { x: 346, y: 646, w: 132, h: 284 },
-    charger: { x: 586, y: 646, w: 144, h: 284 },
-    tank: { x: 806, y: 642, w: 160, h: 288 },
-    dodger: { x: 1050, y: 646, w: 148, h: 284 },
-    boss: { x: 1268, y: 642, w: 176, h: 288 },
+    grunt: { x: 104, y: 594, w: 150, h: 350 },
+    fast: { x: 326, y: 586, w: 170, h: 354 },
+    charger: { x: 562, y: 594, w: 174, h: 350 },
+    tank: { x: 782, y: 590, w: 200, h: 356 },
+    dodger: { x: 1018, y: 594, w: 184, h: 344 },
+    boss: { x: 1244, y: 588, w: 210, h: 356 },
   },
 };
 
@@ -254,6 +312,15 @@ const UPGRADES = [
   { id: "fireRate", title: "炮塔射速 +8%", desc: "所有武器开火间隔降低。", apply: (game) => { game.playerMods.fireRateMultiplier *= 0.92; } },
   { id: "bossDamage", title: "母舰伤害 +15%", desc: "所有子弹打母舰更痛。", apply: (game) => { game.playerMods.bossDamageMultiplier += 0.15; } },
   { id: "aimAssist", title: "辅助瞄准 +12", desc: "子弹更容易贴近敌舰。", apply: (game) => { game.playerMods.aimAssistBonus += 12; } },
+  {
+    id: "fighterCount",
+    title: "战斗机 +1",
+    desc: "特殊技能多派出 1 架战斗机，最多 5 架。",
+    canOffer: (game) => game.playerMods.fighterCount < GAME.maxFighters,
+    apply: (game) => {
+      game.playerMods.fighterCount = Math.min(GAME.maxFighters, game.playerMods.fighterCount + 1);
+    },
+  },
 ];
 
 function getLevelConfig(level, adaptive = {}) {
@@ -368,26 +435,316 @@ function buildTransparentSpriteCanvas(image) {
   if (!sheetCtx || !sheet.width || !sheet.height) return null;
   sheetCtx.drawImage(image, 0, 0);
   const data = sheetCtx.getImageData(0, 0, sheet.width, sheet.height);
-  for (let i = 0; i < data.data.length; i += 4) {
-    const r = data.data[i];
-    const g = data.data[i + 1];
-    const b = data.data[i + 2];
+  const width = sheet.width;
+  const height = sheet.height;
+  const seen = new Uint8Array(width * height);
+  const stack = [];
+  const isBackground = (index) => {
+    const offset = index * 4;
+    const r = data.data[offset];
+    const g = data.data[offset + 1];
+    const b = data.data[offset + 2];
     const bright = (r + g + b) / 3;
     const spread = Math.max(r, g, b) - Math.min(r, g, b);
-    if (bright > 226 && spread < 16) {
-      data.data[i + 3] = 0;
-    } else if (bright > 214 && spread < 20) {
-      data.data[i + 3] = Math.min(data.data[i + 3], 60);
-    }
+    return bright > 178 && spread < 26;
+  };
+  const pushIfBackground = (x, y) => {
+    if (x < 0 || x >= width || y < 0 || y >= height) return;
+    const index = y * width + x;
+    if (seen[index] || !isBackground(index)) return;
+    seen[index] = 1;
+    stack.push(index);
+  };
+
+  for (let x = 0; x < width; x += 1) {
+    pushIfBackground(x, 0);
+    pushIfBackground(x, height - 1);
+  }
+  for (let y = 0; y < height; y += 1) {
+    pushIfBackground(0, y);
+    pushIfBackground(width - 1, y);
+  }
+
+  while (stack.length > 0) {
+    const index = stack.pop();
+    data.data[index * 4 + 3] = 0;
+    const x = index % width;
+    const y = Math.floor(index / width);
+    pushIfBackground(x + 1, y);
+    pushIfBackground(x - 1, y);
+    pushIfBackground(x, y + 1);
+    pushIfBackground(x, y - 1);
   }
   sheetCtx.putImageData(data, 0, 0);
   return sheet;
+}
+
+function updateSpecialSlotIcon() {
+  if (!ui.specialSlotIcon || !friendPlaneCanvas || !friendPlaneSheetReady) return;
+  const rect = FRIEND_PLANE_SHEET.rects[0];
+  const icon = document.createElement("canvas");
+  icon.width = 128;
+  icon.height = 128;
+  const iconCtx = icon.getContext("2d");
+  if (!iconCtx) return;
+  iconCtx.drawImage(
+    friendPlaneCanvas,
+    rect.x,
+    rect.y,
+    rect.w,
+    rect.h,
+    0,
+    0,
+    icon.width,
+    icon.height,
+  );
+  ui.specialSlotIcon.style.backgroundImage = `url("${icon.toDataURL("image/png")}")`;
+  ui.specialSlotIcon.style.backgroundSize = "contain";
+  ui.specialSlotIcon.style.backgroundPosition = "center";
+}
+
+function buildPlayerWeaponSprites(image) {
+  playerWeaponSprites.base = buildPlayerWeaponLayer(image, PLAYER_WEAPON_SHEET.base, 8);
+  playerWeaponSprites.guns = {};
+  Object.keys(PLAYER_WEAPON_SHEET.guns).forEach((key) => {
+    const source = PLAYER_WEAPON_SHEET.guns[key];
+    const layer = buildPlayerWeaponLayer(image, source, 8);
+    if (!layer) return;
+    playerWeaponSprites.guns[key] = {
+      ...layer,
+      pivotX: layer.drawW * TURRET_PIVOT_CONFIG.gunPivotXRatio,
+      pivotY: layer.drawH * TURRET_PIVOT_CONFIG.gunPivotYRatio,
+      muzzle: source.muzzle,
+    };
+  });
+}
+
+function buildPlayerWeaponLayer(image, source, pad) {
+  const sprite = document.createElement("canvas");
+  sprite.width = source.w + pad * 2;
+  sprite.height = source.h + pad * 2;
+  const spriteCtx = sprite.getContext("2d");
+  if (!spriteCtx) return null;
+  spriteCtx.drawImage(
+    image,
+    source.x,
+    source.y,
+    source.w,
+    source.h,
+    pad,
+    pad,
+    source.w,
+    source.h,
+  );
+  removeConnectedLightBackground(sprite, spriteCtx, {
+    x: pad,
+    y: pad,
+    w: source.w,
+    h: source.h,
+  });
+  return {
+    canvas: sprite,
+    drawW: source.drawW * (sprite.width / source.w),
+    drawH: source.drawH * (sprite.height / source.h),
+  };
+}
+
+function removeConnectedLightBackground(canvas, layerCtx, bounds) {
+  const width = canvas.width;
+  const height = canvas.height;
+  const data = layerCtx.getImageData(0, 0, width, height);
+  const seen = new Uint8Array(width * height);
+  const stack = [];
+  const left = bounds ? bounds.x : 0;
+  const top = bounds ? bounds.y : 0;
+  const right = bounds ? bounds.x + bounds.w - 1 : width - 1;
+  const bottom = bounds ? bounds.y + bounds.h - 1 : height - 1;
+  const cornerSamples = [
+    samplePixel(data, top * width + left),
+    samplePixel(data, top * width + right),
+    samplePixel(data, bottom * width + left),
+    samplePixel(data, bottom * width + right),
+  ];
+  const isLightBackground = (index) => {
+    const offset = index * 4;
+    const alpha = data.data[offset + 3];
+    if (alpha === 0) return false;
+    const r = data.data[offset];
+    const g = data.data[offset + 1];
+    const b = data.data[offset + 2];
+    const bright = (r + g + b) / 3;
+    const spread = Math.max(r, g, b) - Math.min(r, g, b);
+    const nearCorner = cornerSamples.some((sample) => colorDistance(sample, { r, g, b }) < 128);
+    return bright > 112 && spread < 90 && nearCorner;
+  };
+  const push = (x, y) => {
+    if (x < 0 || x >= width || y < 0 || y >= height) return;
+    const index = y * width + x;
+    if (seen[index] || !isLightBackground(index)) return;
+    seen[index] = 1;
+    stack.push(index);
+  };
+
+  for (let x = 0; x < width; x += 1) {
+    push(x, 0);
+    push(x, height - 1);
+  }
+  for (let y = 0; y < height; y += 1) {
+    push(0, y);
+    push(width - 1, y);
+  }
+  for (let x = left; x <= right; x += 1) {
+    push(x, top);
+    push(x, bottom);
+  }
+  for (let y = top; y <= bottom; y += 1) {
+    push(left, y);
+    push(right, y);
+  }
+
+  while (stack.length > 0) {
+    const index = stack.pop();
+    data.data[index * 4 + 3] = 0;
+    const x = index % width;
+    const y = Math.floor(index / width);
+    push(x + 1, y);
+    push(x - 1, y);
+    push(x, y + 1);
+    push(x, y - 1);
+  }
+
+  layerCtx.putImageData(data, 0, 0);
+}
+
+function samplePixel(data, index) {
+  const offset = index * 4;
+  return {
+    r: data.data[offset],
+    g: data.data[offset + 1],
+    b: data.data[offset + 2],
+  };
+}
+
+function colorDistance(a, b) {
+  const dr = a.r - b.r;
+  const dg = a.g - b.g;
+  const db = a.b - b.b;
+  return Math.sqrt(dr * dr + dg * dg + db * db);
+}
+
+function getRecordingMimeType() {
+  if (typeof MediaRecorder === "undefined") return "";
+  if (MediaRecorder.isTypeSupported("video/webm;codecs=vp9")) return "video/webm;codecs=vp9";
+  if (MediaRecorder.isTypeSupported("video/webm;codecs=vp8")) return "video/webm;codecs=vp8";
+  return "video/webm";
+}
+
+function setRecordingUi(isRecording) {
+  if (ui.recordStartBtn) {
+    ui.recordStartBtn.disabled = isRecording;
+    ui.recordStartBtn.classList.toggle("is-recording", isRecording);
+    ui.recordStartBtn.textContent = isRecording ? "● 录制中" : "开始录制";
+  }
+  if (ui.recordStopBtn) {
+    ui.recordStopBtn.disabled = !isRecording;
+  }
+}
+
+function startGameRecording() {
+  if (recorderState.isRecording) return;
+  if (typeof MediaRecorder === "undefined") {
+    window.alert("当前浏览器不支持 MediaRecorder");
+    return;
+  }
+  if (!canvas) {
+    window.alert("找不到游戏画布");
+    return;
+  }
+  if (!canvas.captureStream) {
+    window.alert("当前浏览器不支持 canvas.captureStream");
+    return;
+  }
+
+  let canvasStream = null;
+  try {
+    canvasStream = canvas.captureStream(60);
+  } catch (error) {
+    console.warn("60fps capture failed, fallback to browser default", error);
+    canvasStream = canvas.captureStream();
+  }
+
+  const stream = new MediaStream(canvasStream.getVideoTracks());
+  const sound = window.bodyFightGame && window.bodyFightGame.sound;
+  const audioStream = sound && sound.getRecordingStream ? sound.getRecordingStream() : null;
+  if (audioStream) {
+    for (const track of audioStream.getAudioTracks()) stream.addTrack(track);
+  }
+
+  const mimeType = getRecordingMimeType();
+  const options = mimeType
+    ? { mimeType, videoBitsPerSecond: 8000000 }
+    : { videoBitsPerSecond: 8000000 };
+
+  let recorder = null;
+  try {
+    recorder = new MediaRecorder(stream, options);
+  } catch (error) {
+    console.warn("Preferred recorder options failed, fallback to default", error);
+    recorder = new MediaRecorder(stream);
+  }
+
+  recorderState.chunks = [];
+  recorderState.stream = stream;
+  recorderState.recorder = recorder;
+  recorderState.isRecording = true;
+  recorderState.mimeType = recorder.mimeType || mimeType || "video/webm";
+  setRecordingUi(true);
+
+  recorder.ondataavailable = (event) => {
+    if (event.data && event.data.size > 0) recorderState.chunks.push(event.data);
+  };
+
+  recorder.onerror = (event) => {
+    console.error("Recording failed", event.error || event);
+    stopGameRecording();
+  };
+
+  recorder.onstop = () => {
+    const blob = new Blob(recorderState.chunks, { type: recorderState.mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `body-fight-recording-${Date.now()}.webm`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+    if (recorderState.stream) {
+      for (const track of recorderState.stream.getTracks()) {
+        if (track.kind === "video") track.stop();
+      }
+    }
+    recorderState.recorder = null;
+    recorderState.stream = null;
+    recorderState.chunks = [];
+    recorderState.isRecording = false;
+    setRecordingUi(false);
+  };
+
+  recorder.start();
+}
+
+function stopGameRecording() {
+  if (!recorderState.recorder || !recorderState.isRecording) return;
+  recorderState.recorder.stop();
 }
 
 class SoundFx {
   constructor() {
     this.ctx = null;
     this.enabled = false;
+    this.recordingDestination = null;
   }
 
   enable() {
@@ -396,6 +753,15 @@ class SoundFx {
     if (!this.ctx) this.ctx = new AudioContext();
     if (this.ctx.state === "suspended") this.ctx.resume();
     this.enabled = true;
+  }
+
+  getRecordingStream() {
+    this.enable();
+    if (!this.ctx || !this.ctx.createMediaStreamDestination) return null;
+    if (!this.recordingDestination) {
+      this.recordingDestination = this.ctx.createMediaStreamDestination();
+    }
+    return this.recordingDestination.stream;
   }
 
   tone(freq, duration, type = "sine", volume = 0.035, endFreq = null) {
@@ -410,6 +776,7 @@ class SoundFx {
     gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
     osc.connect(gain);
     gain.connect(this.ctx.destination);
+    if (this.recordingDestination) gain.connect(this.recordingDestination);
     osc.start(now);
     osc.stop(now + duration);
   }
@@ -453,6 +820,12 @@ class SoundFx {
   level() {
     this.tone(440, 0.08, "sine", 0.03, 660);
     window.setTimeout(() => this.tone(660, 0.12, "sine", 0.03, 880), 90);
+  }
+
+  special() {
+    this.tone(520, 0.1, "sine", 0.04, 920);
+    window.setTimeout(() => this.tone(760, 0.12, "triangle", 0.035, 1140), 82);
+    window.setTimeout(() => this.tone(1040, 0.14, "square", 0.025, 520), 170);
   }
 }
 
@@ -563,7 +936,7 @@ class HandTracker {
     this.recovering = true;
     this.ready = false;
     this.busy = false;
-    this.status = "识别模块重启中";
+    this.status = "追踪模块重启中";
     try {
       if (this.hands && typeof this.hands.close === "function") {
         await this.hands.close();
@@ -599,7 +972,7 @@ class HandTracker {
     }
     if (this.busy && now - this.sendStartedAt > 900) {
       this.busy = false;
-      this.status = "识别超时，正在重试";
+      this.status = "追踪超时，正在重试";
     }
     if (this.busy) return;
     if (now - this.lastSendAt < 45) return;
@@ -611,7 +984,7 @@ class HandTracker {
         console.error(error);
         this.errorCount += 1;
         const message = error && error.message ? error.message : "unknown";
-        this.status = `识别异常${this.errorCount}：${message.slice(0, 18)}`;
+        this.status = `追踪异常${this.errorCount}：${message.slice(0, 18)}`;
         this.lastSendAt = now + 240;
         if (this.errorCount >= 2) this.rebuildModel();
       })
@@ -694,15 +1067,15 @@ class HandTracker {
       const pipToPalm = Math.hypot(pip.x - palm.x, pip.y - palm.y);
       const mcpToPalm = Math.hypot(mcp.x - palm.x, mcp.y - palm.y);
 
-      const clearlyExtended = tip.y < pip.y - palmSize * 0.08 && tipToPalm > pipToPalm * 1.08;
-      const nearPalm = tipToPalm < Math.max(mcpToPalm * 1.28, palmSize * 0.82);
-      const belowJoint = tip.y > pip.y + palmSize * 0.06;
+      const clearlyExtended = tip.y < pip.y - palmSize * 0.08 && tipToPalm > Math.max(pipToPalm * 1.12, mcpToPalm * 1.35);
+      const nearPalm = tipToPalm < Math.max(mcpToPalm * 1.05, palmSize * 0.68);
+      const belowJoint = tip.y > pip.y + palmSize * 0.09;
       if (clearlyExtended) extended += 1;
       if (nearPalm || belowJoint) folded += 1;
     }
 
-    if (extended >= 3) return "open_palm";
-    if (folded >= 3) return "fist";
+    if (extended >= 3 && folded <= 1) return "open_palm";
+    if (folded >= 3 && extended <= 1) return "fist";
     return "unknown";
   }
 
@@ -797,7 +1170,6 @@ class MonsterManager {
       this.spawnTimer = levelConfig.spawnEvery + Math.random() * levelConfig.spawnJitter;
     }
 
-    const playerZone = { x: width / 2, y: height - 76 };
     for (const monster of this.monsters) {
       if (monster.dead) continue;
       if (monster.variant === "boss") {
@@ -815,7 +1187,8 @@ class MonsterManager {
         if (hpRatio < 0.2 && !monster.desperationUsed) {
           monster.desperationUsed = true;
           monster.warningUntil = performance.now() + 900;
-          const target = { x: width / 2, y: height - 76 };
+          const target = this.getPlayerSideTarget(width, height);
+          monster.desperationTarget = target;
           const angle = Math.atan2(target.y - monster.y, target.x - monster.x);
           monster.vx = Math.cos(angle) * levelConfig.speedBase * 1.8;
           monster.vy = Math.sin(angle) * levelConfig.speedBase * 1.8;
@@ -835,7 +1208,7 @@ class MonsterManager {
         monster.x += monster.vx * dt;
         monster.y += monster.vy * dt;
       }
-      if (monster.type === "enemy" && !monster.reached && distance(monster, playerZone) < GAME.playerRadius) {
+      if (monster.type === "enemy" && !monster.reached && monster.y + monster.r >= height - GAME.defenseLineOffset) {
         monster.reached = true;
         onReachPlayer(monster);
       }
@@ -854,10 +1227,7 @@ class MonsterManager {
       x: width * (fromLeftFront ? 0.08 + Math.random() * 0.3 : 0.62 + Math.random() * 0.3),
       y: -42,
     };
-    const target = {
-      x: width * (0.42 + Math.random() * 0.16),
-      y: height - 74,
-    };
+    const target = this.getPlayerSideTarget(width, height);
     const angle = Math.atan2(target.y - start.y, target.x - start.x);
     const variant = this.chooseEnemyVariant(levelConfig);
     const speed = type === "enemy"
@@ -950,7 +1320,7 @@ class MonsterManager {
   spawnMinion(width, height, levelConfig, boss) {
     const side = Math.random() < 0.5 ? -1 : 1;
     const start = { x: boss.x + side * (boss.r + 28), y: boss.y + boss.r * 0.3 };
-    const target = { x: width * (0.45 + Math.random() * 0.1), y: height - 74 };
+    const target = this.getPlayerSideTarget(width, height);
     const angle = Math.atan2(target.y - start.y, target.x - start.x);
     const speed = levelConfig.speedBase * 1.08;
     const hp = Math.round(levelConfig.enemyHp * 0.82);
@@ -976,6 +1346,13 @@ class MonsterManager {
     });
   }
 
+  getPlayerSideTarget(width, height) {
+    return {
+      x: width * (0.08 + Math.random() * 0.84),
+      y: height - GAME.defenseLineOffset,
+    };
+  }
+
 }
 
 class Game {
@@ -987,7 +1364,9 @@ class Game {
     this.paused = false;
     this.level = 1;
     this.score = 0;
+    this.displayScore = 0;
     this.playerMods = this.createPlayerMods();
+    this.defenseState = this.createDefenseState();
     this.health = this.getMaxHealth();
     this.shield = GAME.maxShield;
     this.lastPlayerDamageAt = 0;
@@ -1000,6 +1379,10 @@ class Game {
     this.levelHits = 0;
     this.totalShots = 0;
     this.totalHits = 0;
+    this.specialCharges = 1;
+    this.specialNextReadyAt = 0;
+    this.resetSpecialGestureState();
+    this.nextSpecialScoreAward = GAME.specialScoreAward;
     this.combo = 0;
     this.bestCombo = 0;
     this.lastKillAt = 0;
@@ -1016,6 +1399,7 @@ class Game {
     this.calibrationMode = "newGame";
     this.calibrationPreviousPhase = "idle";
     this.weaponBanner = null;
+    this.specialPrompt = null;
     this.frameFps = 0;
     this.intermissionLeft = 0;
     this.intermissionDeadline = 0;
@@ -1023,10 +1407,24 @@ class Game {
     this.particles = [];
     this.bullets = [];
     this.enemyBullets = [];
+    this.fighters = [];
     this.weaponType = "normal";
     this.weaponUntil = 0;
+    this.specialCharges = 1;
+    this.specialNextReadyAt = 0;
+    this.specialGestureCount = 0;
+    this.specialGestureLastAt = 0;
+    this.specialBothFistHeld = false;
+    this.specialGestureArmed = false;
+    this.specialOpenStartedAt = 0;
+    this.specialFistStartedAt = 0;
+    this.specialArmedUntil = 0;
+    this.specialGestureDeadline = 0;
+    this.nextSpecialScoreAward = GAME.specialScoreAward;
     this.lastShootSoundAt = 0;
     this.floatingTexts = [];
+    this.scoreEffects = [];
+    this.scoreHudPulseTimer = 0;
     this.sound = new SoundFx();
     this.tracker = new HandTracker(video);
     this.monsters = new MonsterManager();
@@ -1044,9 +1442,13 @@ class Game {
     ui.startBtn.addEventListener("click", () => this.start());
     ui.fullscreenBtn.addEventListener("click", () => this.toggleFullscreen());
     ui.difficultySelect.addEventListener("change", () => this.updateDifficulty());
-    ui.calibrateBtn.addEventListener("click", () => this.beginCalibration(this.phase === "playing" ? "resume" : "newGame"));
+    if (ui.calibrateBtn) {
+      ui.calibrateBtn.addEventListener("click", () => this.beginCalibration(this.phase === "playing" ? "resume" : "newGame"));
+    }
     ui.pauseBtn.addEventListener("click", () => this.togglePause());
     ui.restartBtn.addEventListener("click", () => this.restart());
+    if (ui.recordStartBtn) ui.recordStartBtn.addEventListener("click", () => startGameRecording());
+    if (ui.recordStopBtn) ui.recordStopBtn.addEventListener("click", () => stopGameRecording());
   }
 
   createPlayerMods() {
@@ -1058,7 +1460,45 @@ class Game {
       fireRateMultiplier: 1,
       bossDamageMultiplier: 1,
       aimAssistBonus: 0,
+      fighterCount: 1,
     };
+  }
+
+  createDefenseState() {
+    return {
+      shield: GAME.maxShield,
+      maxShield: GAME.maxShield,
+      health: GAME.maxHealth,
+      maxHealth: GAME.maxHealth,
+    };
+  }
+
+  get health() {
+    return this.defenseState ? this.defenseState.health : GAME.maxHealth;
+  }
+
+  set health(value) {
+    if (!this.defenseState) return;
+    this.defenseState.maxHealth = this.getMaxHealth();
+    this.defenseState.health = clamp(Math.round(value), 0, this.defenseState.maxHealth);
+  }
+
+  get shield() {
+    return this.defenseState ? this.defenseState.shield : GAME.maxShield;
+  }
+
+  set shield(value) {
+    if (!this.defenseState) return;
+    this.defenseState.maxShield = GAME.maxShield;
+    this.defenseState.shield = clamp(value, 0, this.defenseState.maxShield);
+  }
+
+  getDefenseState() {
+    this.defenseState.maxHealth = this.getMaxHealth();
+    this.defenseState.maxShield = GAME.maxShield;
+    this.defenseState.health = clamp(this.defenseState.health, 0, this.defenseState.maxHealth);
+    this.defenseState.shield = clamp(this.defenseState.shield, 0, this.defenseState.maxShield);
+    return this.defenseState;
   }
 
   updateDifficulty() {
@@ -1114,10 +1554,10 @@ class Game {
       await this.tracker.start();
       this.beginCalibration();
       ui.startBtn.disabled = true;
-      ui.calibrateBtn.disabled = false;
+      if (ui.calibrateBtn) ui.calibrateBtn.disabled = false;
       ui.pauseBtn.disabled = true;
       ui.restartBtn.disabled = false;
-      ui.notice.textContent = "请举起手，等屏幕出现手部光标后才会开始校准倒计时。";
+      ui.notice.textContent = "请举起手，等屏幕出现手部光标后才会开始倒计时。";
     } catch (error) {
       console.error(error);
       ui.notice.textContent = error.message || "摄像头启动失败。请检查权限。";
@@ -1131,6 +1571,7 @@ class Game {
   resetGame() {
     this.updateDifficulty();
     this.score = 0;
+    this.displayScore = 0;
     this.playerMods = this.createPlayerMods();
     this.health = this.getMaxHealth();
     this.shield = GAME.maxShield;
@@ -1152,8 +1593,10 @@ class Game {
       this.monsters.reset();
       this.bullets.length = 0;
       this.enemyBullets.length = 0;
+      this.fighters.length = 0;
       this.particles.length = 0;
       this.floatingTexts.length = 0;
+      this.clearScoreEffects();
     }
     this.phase = "calibrating";
     this.running = false;
@@ -1166,16 +1609,16 @@ class Game {
     ui.pauseBtn.disabled = true;
     ui.restartBtn.disabled = false;
     this.showLevelOverlay({
-      title: mode === "resume" ? "重新校准" : "操作范围校准",
+      title: mode === "resume" ? "重新准备" : "操作范围准备",
       countdown: "等待屏幕出现手部光标",
-      button: mode === "resume" ? "完成并继续" : "跳过校准并开始",
+      button: mode === "resume" ? "完成并继续" : "跳过并开始",
       buttonDisabled: false,
       onButton: () => this.finishCalibration(),
       rank: "",
       stats: [
         ["动作", "移动双手"],
         ["目标", "覆盖常用范围"],
-        ["识别样本", "0"],
+        ["样本", "0"],
       ],
     });
   }
@@ -1197,7 +1640,7 @@ class Game {
     if (cursorStable && this.calibrationDraft.samples > 0 && !this.calibrationCountdownStarted) {
       this.calibrationCountdownStarted = true;
       this.calibrationDeadline = now + GAME.calibrationSeconds * 1000;
-      ui.notice.textContent = "已识别到手部光标，请继续移动双手完成校准。";
+      ui.notice.textContent = "已检测到手部光标，请继续移动双手。";
     }
     const left = this.calibrationCountdownStarted ? Math.max(0, Math.ceil((this.calibrationDeadline - now) / 1000)) : GAME.calibrationSeconds;
     ui.summaryCountdown.textContent = this.calibrationCountdownStarted
@@ -1207,7 +1650,7 @@ class Game {
       ui.summaryStats.innerHTML = [
         ["动作", "移动双手"],
         ["目标", "覆盖常用范围"],
-        ["识别样本", this.calibrationDraft.samples],
+        ["样本", this.calibrationDraft.samples],
       ].map(([label, value]) => `<div class="summary-stat"><span>${label}</span><strong>${value}</strong></div>`).join("");
     }
     if (this.calibrationCountdownStarted && now >= this.calibrationDeadline) this.finishCalibration();
@@ -1229,7 +1672,7 @@ class Game {
       this.paused = false;
       this.hideLevelOverlay();
       ui.pauseBtn.disabled = this.phase !== "playing";
-      ui.notice.textContent = "校准已更新。";
+      ui.notice.textContent = "操作范围已更新。";
       return;
     }
     this.resetGame();
@@ -1249,11 +1692,14 @@ class Game {
     this.particles.length = 0;
     this.bullets.length = 0;
     this.enemyBullets.length = 0;
+    this.fighters.length = 0;
     this.floatingTexts.length = 0;
+    this.clearScoreEffects();
     this.weaponType = "normal";
     this.weaponUntil = 0;
     this.monsters.reset();
     this.weaponBanner = null;
+    this.specialPrompt = null;
     this.phase = "playing";
     this.running = true;
     this.paused = false;
@@ -1292,7 +1738,7 @@ class Game {
         ["总分", this.score],
         ["击毁敌舰", this.totalKills],
         ["命中率", `${this.getAccuracy()}%`],
-        ["最高连击", this.bestCombo],
+        ["连击记录", this.bestCombo],
         ["剩余生命", this.health],
       ],
     });
@@ -1304,6 +1750,7 @@ class Game {
     this.paused = false;
     this.bullets.length = 0;
     this.enemyBullets.length = 0;
+    this.fighters.length = 0;
     this.monsters.reset();
     ui.pauseBtn.textContent = "暂停";
     ui.pauseBtn.disabled = true;
@@ -1324,7 +1771,7 @@ class Game {
           ["总分", this.score],
           ["击毁敌舰", this.totalKills],
           ["命中率", `${this.getAccuracy()}%`],
-          ["最高连击", this.bestCombo],
+          ["连击记录", this.bestCombo],
           ["剩余生命", this.health],
           ["本关得分", scoreGain],
         ],
@@ -1349,7 +1796,7 @@ class Game {
         ["本关得分", scoreGain],
         ["击毁敌舰", this.levelKills],
         ["本关命中率", `${levelAccuracy}%`],
-        ["最高连击", this.bestCombo],
+        ["连击记录", this.bestCombo],
         ["承受伤害", this.levelDamageTaken],
         ["剩余生命", this.health],
       ],
@@ -1385,7 +1832,7 @@ class Game {
   }
 
   pickUpgradeChoices() {
-    const pool = [...UPGRADES];
+    const pool = UPGRADES.filter((upgrade) => !upgrade.canOffer || upgrade.canOffer(this));
     const choices = [];
     while (choices.length < 3 && pool.length > 0) {
       const index = Math.floor(Math.random() * pool.length);
@@ -1450,6 +1897,134 @@ class Game {
     writeBestRecord(record);
   }
 
+  addScore(amount, source = null, color = "#f6c84c", label = null) {
+    if (!amount) return;
+    this.score += amount;
+    if (source) this.spawnScoreEffect(source.x, source.y, amount, color, label);
+    while (this.score >= this.nextSpecialScoreAward) {
+      this.specialCharges += 1;
+      this.nextSpecialScoreAward += GAME.specialScoreAward;
+      this.spawnFloatingText(this.width / 2, this.height * 0.3, "特殊技能 +1", "#6bf2ff");
+      ui.notice.textContent = "分数奖励：特殊技能 +1。";
+      this.sound.pickup();
+    }
+  }
+
+  updateDisplayedScore(dt) {
+    if (this.displayScore === undefined) this.displayScore = this.score;
+    const diff = this.score - this.displayScore;
+    if (Math.abs(diff) < 0.5) {
+      this.displayScore = this.score;
+      return;
+    }
+    const minStep = 80 * dt;
+    const fastStep = Math.abs(diff) * clamp(dt * 9, 0.08, 0.42);
+    const step = Math.min(Math.abs(diff), Math.max(minStep, fastStep));
+    this.displayScore += Math.sign(diff) * step;
+  }
+
+  clearScoreEffects() {
+    for (const item of this.scoreEffects || []) {
+      if (item.element) item.element.remove();
+    }
+    this.scoreEffects.length = 0;
+  }
+
+  getScoreHudTarget() {
+    if (!ui.score || !canvas) return { x: 112, y: 58 };
+    const hudItem = ui.score.closest(".hud-item") || ui.score;
+    const hudRect = hudItem.getBoundingClientRect();
+    const canvasRect = canvas.getBoundingClientRect();
+    const scaleX = this.width / Math.max(1, canvasRect.width);
+    const scaleY = this.height / Math.max(1, canvasRect.height);
+    return {
+      x: (hudRect.left + hudRect.width * 0.5 - canvasRect.left) * scaleX,
+      y: (hudRect.top + hudRect.height * 0.5 - canvasRect.top) * scaleY,
+    };
+  }
+
+  canvasToStagePoint(x, y) {
+    const canvasRect = canvas.getBoundingClientRect();
+    const stageRect = stage.getBoundingClientRect();
+    return {
+      x: canvasRect.left - stageRect.left + (x / Math.max(1, this.width)) * canvasRect.width,
+      y: canvasRect.top - stageRect.top + (y / Math.max(1, this.height)) * canvasRect.height,
+    };
+  }
+
+  spawnScoreEffect(x, y, amount, color = "#f6c84c", label = null) {
+    if (this.scoreEffects.length >= GAME.maxScoreEffects) {
+      const removed = this.scoreEffects.shift();
+      if (removed && removed.element) removed.element.remove();
+    }
+    const target = this.getScoreHudTarget();
+    const distanceToHud = distance({ x, y }, target);
+    const element = document.createElement("span");
+    element.className = "score-fx";
+    element.textContent = label || `+${amount}`;
+    element.style.setProperty("--score-fx-color", color);
+    if (ui.scoreFxLayer) ui.scoreFxLayer.appendChild(element);
+    this.scoreEffects.push({
+      x,
+      y,
+      fromX: x,
+      fromY: y,
+      targetX: target.x,
+      targetY: target.y,
+      amount,
+      label: label || `+${amount}`,
+      color,
+      age: 0,
+      duration: clamp(0.42 + distanceToHud / 1900, 0.48, 0.92),
+      arrived: false,
+      phase: Math.random() * Math.PI * 2,
+      element,
+    });
+  }
+
+  updateScoreEffects(dt) {
+    for (const item of this.scoreEffects) {
+      item.age += dt;
+      const t = clamp(item.age / item.duration, 0, 1);
+      const eased = 1 - Math.pow(1 - t, 3);
+      const arc = Math.sin(t * Math.PI) * 42;
+      item.x = item.fromX + (item.targetX - item.fromX) * eased + Math.sin(item.phase + t * Math.PI * 2) * 8 * (1 - t);
+      item.y = item.fromY + (item.targetY - item.fromY) * eased - arc;
+      if (item.element) {
+        const point = this.canvasToStagePoint(item.x, item.y);
+        const scale = 1 + Math.sin(t * Math.PI) * 0.16;
+        const fade = item.arrived ? clamp(1 - (item.age - item.duration) / 0.2, 0, 1) : 1;
+        item.element.style.transform = `translate3d(${point.x}px, ${point.y}px, 0) translate(-50%, -50%) scale(${scale})`;
+        item.element.style.opacity = String(fade);
+      }
+      if (!item.arrived && t >= 1) {
+        item.arrived = true;
+        this.triggerScoreHudPulse(item.amount, item.color);
+      }
+    }
+    this.scoreEffects = this.scoreEffects.filter((item) => {
+      const alive = item.age < item.duration + 0.2;
+      if (!alive && item.element) item.element.remove();
+      return alive;
+    });
+  }
+
+  triggerScoreHudPulse(amount, color) {
+    const hudItem = ui.score ? ui.score.closest(".hud-item") : null;
+    if (hudItem) {
+      hudItem.style.setProperty("--score-hit-color", color || "#f6c84c");
+      hudItem.classList.remove("score-hit");
+      void hudItem.offsetWidth;
+      hudItem.classList.add("score-hit");
+      window.clearTimeout(this.scoreHudPulseTimer);
+      this.scoreHudPulseTimer = window.setTimeout(() => {
+        hudItem.classList.remove("score-hit");
+      }, 360);
+    }
+    const target = this.getScoreHudTarget();
+    this.spawnFloatingText(target.x, target.y + 32, `+${amount}`, color || "#f6c84c");
+  }
+
   spawnParticle(x, y) {
     if (this.particles.length >= GAME.maxParticles) this.particles.splice(0, this.particles.length - GAME.maxParticles + 1);
     const angle = Math.random() * Math.PI * 2;
@@ -1460,8 +2035,10 @@ class Game {
       vx: Math.cos(angle) * speed,
       vy: Math.sin(angle) * speed,
       life: 0.45 + Math.random() * 0.35,
+      maxLife: 0.8,
       size: 4 + Math.random() * 4,
       color: "#f6c84c",
+      kind: "spark",
     });
   }
 
@@ -1493,10 +2070,12 @@ class Game {
         return;
       }
       this.fireFromHands(now);
+      this.updateSpecialGesture(now);
+      this.updateFighters(dt, now);
       this.updateBullets(dt);
       const levelConfig = this.getCurrentLevelConfig();
       this.monsters.update(dt, this.width, this.height, levelConfig, (monster) => {
-        this.damagePlayer(monster.damage || 6, this.width / 2, this.height - 76, monster.color || "#f36d6d", monster.variant === "boss");
+        this.damagePlayer(monster.damage || 6, clamp(monster.x, 0, this.width), this.getDefenseLineY(), monster.color || "#f36d6d", monster.variant === "boss");
       });
       if (this.phase === "playing") {
         this.fireFromEnemies(now, levelConfig);
@@ -1508,6 +2087,8 @@ class Game {
     if (!this.paused) {
       this.updateParticles(dt);
       this.updateFloatingTexts(dt);
+      this.updateScoreEffects(dt);
+      this.updateDisplayedScore(dt);
       this.screenShake = Math.max(0, this.screenShake - dt * 24);
     }
 
@@ -1566,18 +2147,21 @@ class Game {
   }
 
   getEnemyTargetPoint(monster) {
-    const left = this.getGunPosition("Left");
-    const right = this.getGunPosition("Right");
     const defenseY = this.getDefenseLineY();
-    if (monster.variant === "boss" && Math.random() < 0.2) {
-      return { x: this.width / 2, y: defenseY };
-    }
-    const gun = Math.abs(monster.x - left.x) < Math.abs(monster.x - right.x) ? left : right;
-    return { x: gun.x, y: defenseY };
+    const spread = monster.variant === "boss" ? 0.92 : 0.84;
+    const margin = (1 - spread) / 2;
+    const aimX = Math.random() < 0.55
+      ? clamp(monster.x + (Math.random() - 0.5) * this.width * 0.38, this.width * 0.06, this.width * 0.94)
+      : this.width * (margin + Math.random() * spread);
+    return { x: aimX, y: defenseY };
   }
 
   getDefenseLineY() {
-    return this.height - GAME.defenseLineOffset;
+    return this.height - this.getDefensePanelHeight() + 34;
+  }
+
+  getDefensePanelHeight() {
+    return clamp(this.height * 0.18, 112, 206);
   }
 
   fireFromEnemies(now, levelConfig) {
@@ -1637,6 +2221,20 @@ class Game {
       bullet.prevY = bullet.y;
       bullet.x += bullet.vx * dt;
       bullet.y += bullet.vy * dt;
+      for (const fighter of this.fighters) {
+        if (fighter.dead || bullet.dead) continue;
+        const hit = segmentCircleHit(
+          { x: bullet.prevX, y: bullet.prevY },
+          { x: bullet.x, y: bullet.y },
+          fighter,
+          fighter.r + bullet.radius,
+        );
+        if (hit) {
+          bullet.dead = true;
+          this.damageFighter(fighter, 1, hit.x, hit.y, bullet.color);
+        }
+      }
+      if (bullet.dead) continue;
       if (bullet.prevY < defenseY && bullet.y >= defenseY) {
         const t = (defenseY - bullet.prevY) / Math.max(1, bullet.y - bullet.prevY);
         const hitX = bullet.prevX + (bullet.x - bullet.prevX) * t;
@@ -1650,6 +2248,17 @@ class Game {
       const inside = bullet.x > -50 && bullet.x < this.width + 50 && bullet.y > -50 && bullet.y < this.height + 50;
       return !bullet.dead && inside;
     });
+  }
+
+  damageFighter(fighter, damage, x, y, color) {
+    fighter.hp -= Math.max(1, damage);
+    fighter.flashUntil = performance.now() + 120;
+    this.spawnHitParticles(x, y, color || "#6bf2ff");
+    if (fighter.hp <= 0) {
+      fighter.dead = true;
+      this.spawnExplosion(fighter.x, fighter.y, "#6bf2ff", 22);
+      this.screenShake = Math.max(this.screenShake, 3);
+    }
   }
 
   damagePlayer(damage, x, y, color, strong = false) {
@@ -1690,6 +2299,234 @@ class Game {
       const gunState = this.tracker.handsState[handId];
       if (now - gunState.lastShotAt < weapon.fireEveryMs) continue;
       this.shoot(handId, targetHand, weapon, now);
+    }
+  }
+
+  resetSpecialGestureState() {
+    this.specialGestureCount = 0;
+    this.specialGestureLastAt = 0;
+    this.specialBothFistHeld = false;
+    this.specialGestureArmed = false;
+    this.specialOpenStartedAt = 0;
+    this.specialFistStartedAt = 0;
+    this.specialArmedUntil = 0;
+    this.specialGestureDeadline = 0;
+  }
+
+  updateSpecialGesture(now) {
+    const left = this.tracker.handsState.Left;
+    const right = this.tracker.handsState.Right;
+    const bothOpen = this.isHandOpen(left) && this.isHandOpen(right);
+    const bothFist = this.isHandFist(left) && this.isHandFist(right);
+
+    if (this.specialGestureCount > 0 && this.specialGestureDeadline > 0 && now > this.specialGestureDeadline) {
+      this.specialGestureCount = 0;
+      this.specialGestureDeadline = 0;
+      this.specialGestureArmed = false;
+      this.specialFistStartedAt = 0;
+      this.specialBothFistHeld = false;
+      this.spawnFloatingText(this.width / 2, this.height * 0.36, "技能手势超时", "#aeb9c2");
+    }
+
+    if (bothOpen) {
+      if (!this.specialOpenStartedAt) this.specialOpenStartedAt = now;
+      this.specialFistStartedAt = 0;
+      this.specialBothFistHeld = false;
+      if (now - this.specialOpenStartedAt >= 180) {
+        this.specialGestureArmed = true;
+        this.specialArmedUntil = now + 2400;
+      }
+      return;
+    }
+
+    this.specialOpenStartedAt = 0;
+    if (!this.specialGestureArmed || now > this.specialArmedUntil) {
+      this.specialGestureArmed = false;
+      this.specialFistStartedAt = 0;
+      if (!bothFist) this.specialBothFistHeld = false;
+      return;
+    }
+
+    if (!bothFist) {
+      this.specialFistStartedAt = 0;
+      this.specialBothFistHeld = false;
+      return;
+    }
+
+    if (!this.specialFistStartedAt) this.specialFistStartedAt = now;
+    if (now - this.specialFistStartedAt < 180) return;
+    if (this.specialBothFistHeld) return;
+
+    this.specialBothFistHeld = true;
+    this.specialGestureArmed = false;
+    this.specialFistStartedAt = 0;
+    this.specialGestureCount += 1;
+    this.specialGestureLastAt = now;
+    this.specialGestureDeadline = now + 5000;
+    if (this.specialGestureCount >= 3) {
+      if (this.tryActivateSpecial(now)) {
+        this.showSpecialPrompt("友军已出动", 3, "#39ff6a", now);
+      }
+    } else {
+      this.showSpecialPrompt(`友军即将出动 ${this.specialGestureCount}/3`, this.specialGestureCount, "#6bf2ff", now);
+    }
+  }
+
+  showSpecialPrompt(text, progress, color, now = performance.now()) {
+    this.specialPrompt = {
+      text,
+      progress,
+      color,
+      start: now,
+      until: now + 1050,
+    };
+  }
+
+  isHandOpen(hand) {
+    if (!this.isHandActive(hand)) return false;
+    return hand.currentGesture === "open_palm"
+      || (hand.pendingGesture === "open_palm" && hand.pendingGestureFrames >= 3);
+  }
+
+  isHandFist(hand) {
+    if (!this.isHandActive(hand)) return false;
+    return hand.currentGesture === "fist"
+      || (hand.currentGesture === "attack_triggered" && hand.previousStableGesture === "fist")
+      || (hand.pendingGesture === "fist" && hand.pendingGestureFrames >= 3);
+  }
+
+  tryActivateSpecial(now) {
+    if (this.specialCharges <= 0) {
+      ui.notice.textContent = "特殊技能次数不足。";
+      this.spawnFloatingText(this.width / 2, this.height * 0.42, "技能次数不足", "#aeb9c2");
+      this.resetSpecialGestureState();
+      return false;
+    }
+    if (now < this.specialNextReadyAt) {
+      const left = Math.ceil((this.specialNextReadyAt - now) / 1000);
+      ui.notice.textContent = `特殊技能冷却中：${left} 秒。`;
+      this.spawnFloatingText(this.width / 2, this.height * 0.42, `冷却 ${left}s`, "#aeb9c2");
+      this.resetSpecialGestureState();
+      return false;
+    }
+    this.specialCharges -= 1;
+    this.specialNextReadyAt = now + GAME.specialCooldownMs;
+    this.resetSpecialGestureState();
+    this.spawnFighterSquad(now);
+    return true;
+  }
+
+  spawnFighterSquad(now) {
+    const count = clamp(this.playerMods.fighterCount || 1, 1, GAME.maxFighters);
+    const centerX = this.width / 2;
+    const startY = this.height + 76;
+    const spacing = 72;
+    this.fighters.length = 0;
+    for (let i = 0; i < count; i += 1) {
+      const offset = (i - (count - 1) / 2) * spacing;
+      this.fighters.push({
+        x: centerX + offset,
+        y: startY + Math.abs(offset) * 0.18,
+        prevX: centerX + offset,
+        prevY: startY,
+        vx: 0,
+        vy: -260,
+        r: 28,
+        hp: 5,
+        maxHp: 5,
+        until: now + GAME.specialDurationMs,
+        lastShotAt: now - i * 60,
+        spriteIndex: i % FRIEND_PLANE_SHEET.rects.length,
+        phase: i * 0.9,
+        dead: false,
+      });
+    }
+    ui.notice.textContent = `特殊技能启动：${count} 架友方战斗机出击。`;
+    this.spawnFloatingText(centerX, this.height * 0.28, `战斗机队 x${count}`, "#6bf2ff");
+    this.sound.special();
+  }
+
+  updateFighters(dt, now) {
+    const weapon = this.getCurrentWeapon(now);
+    for (const fighter of this.fighters) {
+      if (fighter.dead) continue;
+      if (now >= fighter.until || fighter.hp <= 0) {
+        fighter.dead = true;
+        this.spawnExplosion(fighter.x, fighter.y, "#6bf2ff", 16);
+        continue;
+      }
+      const target = this.findFighterTarget(fighter);
+      fighter.prevX = fighter.x;
+      fighter.prevY = fighter.y;
+      if (target) {
+        const hoverDistance = 118 + Math.sin(now * 0.004 + fighter.phase) * 26;
+        const desired = {
+          x: clamp(target.x + Math.sin(now * 0.003 + fighter.phase) * 76, 42, this.width - 42),
+          y: clamp(target.y + hoverDistance, this.height * 0.14, this.getDefenseLineY() - 42),
+        };
+        const dx = desired.x - fighter.x;
+        const dy = desired.y - fighter.y;
+        fighter.vx += dx * dt * 8.5;
+        fighter.vy += dy * dt * 8.5;
+        const speed = Math.hypot(fighter.vx, fighter.vy);
+        const maxSpeed = 520;
+        if (speed > maxSpeed) {
+          fighter.vx = (fighter.vx / speed) * maxSpeed;
+          fighter.vy = (fighter.vy / speed) * maxSpeed;
+        }
+        if (now - fighter.lastShotAt >= Math.max(135, weapon.fireEveryMs * 1.05)) {
+          this.fireFromFighter(fighter, target, weapon, now);
+        }
+      } else {
+        fighter.vx += (this.width / 2 - fighter.x) * dt * 2.5;
+        fighter.vy += (-230 - fighter.vy) * dt * 3.2;
+      }
+      fighter.vx *= 0.94;
+      fighter.vy *= 0.94;
+      fighter.x = clamp(fighter.x + fighter.vx * dt, 32, this.width - 32);
+      fighter.y = clamp(fighter.y + fighter.vy * dt, this.height * 0.12, this.getDefenseLineY() - 26);
+    }
+    this.fighters = this.fighters.filter((fighter) => !fighter.dead);
+  }
+
+  findFighterTarget(fighter) {
+    let best = null;
+    for (const monster of this.monsters.monsters) {
+      if (monster.dead || monster.type !== "enemy") continue;
+      const dist = distance(fighter, monster);
+      const forward = monster.y * 0.42;
+      const score = dist - forward;
+      if (!best || score < best.score) best = { monster, score };
+    }
+    return best ? best.monster : null;
+  }
+
+  fireFromFighter(fighter, target, weapon, now) {
+    if (this.bullets.length >= GAME.maxBullets) return;
+    const dx = target.x - fighter.x;
+    const dy = target.y - fighter.y;
+    const length = Math.max(1, Math.hypot(dx, dy));
+    const ux = dx / length;
+    const uy = dy / length;
+    const fighterWeapon = {
+      ...weapon,
+      id: weapon.id,
+      fireEveryMs: Math.max(135, weapon.fireEveryMs * 1.05),
+      bulletSpeed: Math.max(weapon.bulletSpeed, 760),
+      bulletRadius: Math.max(4, weapon.bulletRadius * 0.8),
+      color: FRIEND_PLANE_SHEET.rects[fighter.spriteIndex].color || weapon.color,
+      pellets: [0],
+      sideOffsets: [0],
+      splashRadius: 0,
+      pierce: weapon.beam ? 1 : 0,
+    };
+    this.createBullet({ x: fighter.x + ux * 32, y: fighter.y + uy * 32 }, ux, uy, "Fighter", 0, fighterWeapon);
+    fighter.lastShotAt = now;
+    this.levelShots += 1;
+    this.totalShots += 1;
+    if (now - this.lastShootSoundAt > 70) {
+      this.lastShootSoundAt = now;
+      this.sound.shoot(weapon.id);
     }
   }
 
@@ -1740,7 +2577,9 @@ class Game {
 
   getGunPosition(handId) {
     const offset = handId === "Left" ? -GAME.gunGap : GAME.gunGap;
-    return { x: this.width / 2 + offset, y: this.height - 70 };
+    const panelTop = this.height - this.getDefensePanelHeight();
+    const gunY = panelTop + clamp(this.getDefensePanelHeight() * 0.18, 20, 38);
+    return { x: this.width / 2 + offset * 1.18, y: gunY };
   }
 
   getGunAim(handId, targetHand) {
@@ -1933,6 +2772,8 @@ class Game {
     target.flashUntil = now + 90;
     this.spawnHitParticles(x, y, bullet.color || target.color);
     this.spawnFloatingText(x, y, `-${actualDamage}`, bullet.color || "#f4f8fb");
+    const hitScore = Math.max(1, Math.ceil(actualDamage));
+    this.addScore(hitScore, { x, y }, bullet.color || "#f4f8fb", `命中 +${hitScore}`);
     this.screenShake = Math.max(this.screenShake, bullet.weaponId === "flame" ? 4 : 2);
 
     if (bullet.splashRadius > 0) {
@@ -1949,7 +2790,8 @@ class Game {
     for (const monster of killed) {
       if (monster.dead || monster.hp > 0) continue;
       monster.dead = true;
-      this.score += monster.score || 100;
+      const killScore = monster.score || 100;
+      this.addScore(killScore, { x: monster.x, y: monster.y }, "#f6c84c", `击毁 +${killScore}`);
       this.levelKills += 1;
       this.totalKills += 1;
       this.combo = now - this.lastKillAt <= GAME.comboWindowMs ? this.combo + 1 : 1;
@@ -1957,11 +2799,9 @@ class Game {
       this.lastKillAt = now;
       if (this.combo >= 3) {
         const comboBonus = this.combo * 12;
-        this.score += comboBonus;
-        this.spawnFloatingText(monster.x, monster.y - 38, `连击 +${comboBonus}`, "#ffffff");
+        this.addScore(comboBonus, { x: monster.x, y: monster.y - 26 }, "#ffffff", `连击 +${comboBonus}`);
       }
       this.spawnExplosion(monster.x, monster.y, monster.color, monster.variant === "tank" ? 34 : 24);
-      this.spawnFloatingText(monster.x, monster.y - 18, `+${monster.score || 100}`, "#f6c84c");
       this.screenShake = Math.max(this.screenShake, monster.variant === "boss" ? 16 : 5);
       if (monster.variant === "boss") this.sound.boss();
       else this.sound.kill();
@@ -1975,12 +2815,11 @@ class Game {
     this.levelHits += 1;
     this.totalHits += 1;
     const reward = target.variant === "boss" || target.variant === "tank" ? 12 : 8;
-    this.score += reward;
+    this.addScore(reward, { x, y }, "#6bf2ff", `拦截 +${reward}`);
     this.combo = Math.max(1, this.combo);
     this.bestCombo = Math.max(this.bestCombo, this.combo);
     this.lastKillAt = now;
     this.spawnHitParticles(x, y, target.color || bullet.color || "#f4f8fb");
-    this.spawnFloatingText(x, y - 14, `拦截 +${reward}`, "#6bf2ff");
     this.sound.hit();
   }
 
@@ -1989,14 +2828,17 @@ class Game {
     for (let i = 0; i < count; i += 1) {
       const angle = Math.random() * Math.PI * 2;
       const speed = 70 + Math.random() * 220;
+      const life = 0.34 + Math.random() * 0.38;
       this.particles.push({
         x,
         y,
         vx: Math.cos(angle) * speed,
         vy: Math.sin(angle) * speed,
-        life: 0.34 + Math.random() * 0.38,
+        life,
+        maxLife: life,
         size: 3 + Math.random() * 5,
         color,
+        kind: "spark",
       });
     }
   }
@@ -2006,14 +2848,17 @@ class Game {
     for (let i = 0; i < actualCount; i += 1) {
       const angle = Math.random() * Math.PI * 2;
       const speed = 110 + Math.random() * 280;
+      const life = 0.45 + Math.random() * 0.45;
       this.particles.push({
         x,
         y,
         vx: Math.cos(angle) * speed,
         vy: Math.sin(angle) * speed,
-        life: 0.45 + Math.random() * 0.45,
+        life,
+        maxLife: life,
         size: 4 + Math.random() * 8,
         color,
+        kind: "ember",
       });
     }
   }
@@ -2022,14 +2867,39 @@ class Game {
     const weapon = this.getCurrentWeapon();
     const remain = this.weaponType === "normal" ? "" : ` ${Math.ceil(Math.max(0, this.weaponUntil - performance.now()) / 1000)}s`;
     setText(ui.levelState, `${this.level}/${GAME.maxLevel}`);
-    setText(ui.score, String(this.score));
+    setText(ui.score, String(Math.round(this.displayScore === undefined ? this.score : this.displayScore)));
     setText(ui.health, `${this.health}/${this.getMaxHealth()}`);
     setText(ui.shieldState, `${Math.ceil(this.shield)}/${GAME.maxShield}`);
     setText(ui.timeLeft, String(Math.ceil(this.timeLeft)));
     setText(ui.weaponState, `${weapon.label}${remain}`);
+    this.updateSpecialSlot(performance.now());
     setText(ui.comboState, String(this.combo));
-    setText(ui.bestState, `${Math.max(this.bestRecord.score || 0, this.score)}`);
-    setText(ui.trackingState, this.tracker.status || "未启动");
+  }
+
+  updateSpecialSlot(now) {
+    const cooldown = Math.max(0, this.specialNextReadyAt - now);
+    const cooling = cooldown > 0;
+    const active = this.fighters.length > 0;
+    if (ui.specialSlot) {
+      ui.specialSlot.classList.toggle("is-cooling", cooling);
+      ui.specialSlot.classList.toggle("is-active", active);
+      ui.specialSlot.classList.toggle("is-empty", this.specialCharges <= 0);
+    }
+    setText(ui.specialState, `×${this.specialCharges}`);
+    setText(ui.specialCooldownState, cooling ? `${Math.ceil(cooldown / 1000)}s` : "");
+  }
+
+  getSpecialHudText(now) {
+    const cooldown = Math.max(0, this.specialNextReadyAt - now);
+    const active = this.fighters.length > 0 ? ` 战机${this.fighters.length}` : "";
+    if (this.specialGestureCount > 0 && this.specialGestureDeadline > now) {
+      return `${this.specialCharges} 次 技能${this.specialGestureCount}/3 ${Math.ceil((this.specialGestureDeadline - now) / 1000)}s${active}`;
+    }
+    if (this.specialGestureArmed) {
+      return `${this.specialCharges} 次 握拳${this.specialGestureCount}/3${active}`;
+    }
+    if (cooldown > 0) return `${this.specialCharges} 次 ${Math.ceil(cooldown / 1000)}s${active}`;
+    return `${this.specialCharges} 次${active}`;
   }
 
   render(now) {
@@ -2039,78 +2909,284 @@ class Game {
       ctx.translate((Math.random() - 0.5) * this.screenShake, (Math.random() - 0.5) * this.screenShake);
     }
     this.drawBackdrop();
-    this.drawDefenseLine();
-    this.drawPlayerZone();
+    this.drawDefensePanel();
     this.drawGuns(now);
+    this.drawFighters(now);
     this.drawMonsters(now);
     this.drawBullets();
     this.drawEnemyBullets();
     this.drawParticles();
+    this.drawScoreEffects();
     this.drawFloatingTexts();
     this.drawWeaponBanner(now);
+    this.drawSpecialPrompt(now);
     if (this.phase === "idle") this.drawStartHint();
     if (this.phase === "calibrating") this.drawCalibrationHint();
     this.drawCrosshairs(now);
+    this.drawSharedDefenseStatus();
     ctx.restore();
   }
 
   drawBackdrop() {
-    const gradient = ctx.createLinearGradient(0, 0, 0, this.height);
-    gradient.addColorStop(0, "#172128");
-    gradient.addColorStop(0.55, "#0d1419");
-    gradient.addColorStop(1, "#05080b");
-    ctx.fillStyle = gradient;
+    ctx.fillStyle = "rgba(7, 16, 21, 0.56)";
     ctx.fillRect(0, 0, this.width, this.height);
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.06)";
+  }
+
+  drawDefensePanel() {
+    const y = this.getDefenseLineY();
+    const panelHeight = this.getDefensePanelHeight();
+    const top = this.height - panelHeight;
+    const bottom = this.height;
+    const corner = 32;
+    const centerX = this.width / 2;
+    const notchW = clamp(this.width * 0.36, 520, 760);
+    const statusW = clamp(this.width * 0.34, 520, 650);
+    const sideGlowH = clamp(panelHeight * 0.36, 64, 104);
+
+    ctx.save();
+    const panelGradient = ctx.createLinearGradient(0, top, 0, bottom);
+    panelGradient.addColorStop(0, "rgba(12, 43, 57, 0.9)");
+    panelGradient.addColorStop(0.38, "rgba(8, 26, 39, 0.96)");
+    panelGradient.addColorStop(1, "rgba(2, 9, 15, 0.99)");
+    ctx.fillStyle = panelGradient;
+    ctx.beginPath();
+    ctx.moveTo(16, top + corner);
+    ctx.lineTo(48, top + 10);
+    ctx.lineTo(centerX - notchW / 2, top + 10);
+    ctx.lineTo(centerX - notchW / 2 + 52, top - 8);
+    ctx.lineTo(centerX + notchW / 2 - 52, top - 8);
+    ctx.lineTo(centerX + notchW / 2, top + 10);
+    ctx.lineTo(this.width - 48, top + 10);
+    ctx.lineTo(this.width - 16, top + corner);
+    ctx.lineTo(this.width - 16, bottom - 32);
+    ctx.lineTo(this.width - 56, bottom - 10);
+    ctx.lineTo(centerX + notchW / 2, bottom - 10);
+    ctx.lineTo(centerX + notchW / 2 - 42, bottom - 34);
+    ctx.lineTo(centerX - notchW / 2 + 42, bottom - 34);
+    ctx.lineTo(centerX - notchW / 2, bottom - 10);
+    ctx.lineTo(56, bottom - 10);
+    ctx.lineTo(16, bottom - 32);
+    ctx.closePath();
+    ctx.shadowColor = "rgba(34, 211, 238, 0.45)";
+    ctx.shadowBlur = 24;
+    ctx.fill();
+
+    const bevel = ctx.createLinearGradient(0, top, 0, top + 50);
+    bevel.addColorStop(0, "rgba(113, 239, 255, 0.18)");
+    bevel.addColorStop(0.45, "rgba(34, 211, 238, 0.07)");
+    bevel.addColorStop(1, "rgba(0, 0, 0, 0)");
+    ctx.fillStyle = bevel;
+    ctx.fillRect(24, top + 10, this.width - 48, 50);
+
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = "rgba(91, 230, 255, 0.78)";
+    ctx.lineWidth = 5;
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(2, 11, 18, 0.86)";
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    ctx.globalAlpha = 0.12;
+    ctx.strokeStyle = "rgba(34, 211, 238, 0.34)";
     ctx.lineWidth = 1;
-    for (let x = 0; x < this.width; x += 64) {
+    for (let x = 48; x < this.width - 48; x += 52) {
       ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, this.height);
+      ctx.moveTo(x, top + 18);
+      ctx.lineTo(x, bottom - 20);
       ctx.stroke();
     }
-  }
+    for (let row = top + 28; row < bottom - 18; row += 34) {
+      ctx.beginPath();
+      ctx.moveTo(42, row);
+      ctx.lineTo(this.width - 42, row);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
 
-  drawPlayerZone() {
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
+    ctx.fillStyle = "rgba(2, 8, 13, 0.68)";
+    this.drawChamferRect(centerX - statusW * 0.68, top + panelHeight * 0.42, statusW * 1.36, panelHeight * 0.48, 18);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(34, 211, 238, 0.25)";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    ctx.fillStyle = "rgba(8, 24, 34, 0.9)";
+    this.drawChamferRect(32, top + 20, 122, 34, 8);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(34, 211, 238, 0.58)";
+    ctx.stroke();
+    ctx.fillStyle = "#d7f7ff";
+    ctx.font = "16px system-ui";
+    ctx.textAlign = "left";
+    ctx.fillText("防线", 86, top + 43);
+
+    ctx.strokeStyle = "rgba(34, 211, 238, 0.9)";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(70, top + 18);
+    ctx.lineTo(centerX - statusW * 0.78, top + 18);
+    ctx.moveTo(centerX + statusW * 0.78, top + 18);
+    ctx.lineTo(this.width - 70, top + 18);
+    ctx.stroke();
+
+    const leftBoxW = clamp(this.width * 0.21, 300, 405);
+    ctx.fillStyle = "rgba(4, 12, 18, 0.58)";
+    this.drawChamferRect(72, top + panelHeight * 0.43, leftBoxW, 70, 12);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(34, 211, 238, 0.5)";
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+
+    ctx.fillStyle = "rgba(8, 20, 28, 0.95)";
+    this.drawChamferRect(24, top + 18, 52, 36, 7);
+    ctx.fill();
+    ctx.fillStyle = "rgba(34, 211, 238, 0.9)";
+    ctx.beginPath();
+    ctx.moveTo(34, top + 28);
+    ctx.lineTo(70, top + 28);
+    ctx.lineTo(58, top + 44);
+    ctx.lineTo(24, top + 44);
+    ctx.fill();
+
+    ctx.fillStyle = "rgba(34, 211, 238, 0.1)";
+    ctx.beginPath();
+    ctx.arc(106, top + panelHeight * 0.43 + 35, 23, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(34, 211, 238, 0.68)";
+    ctx.lineWidth = 1.7;
+    ctx.stroke();
+    ctx.fillStyle = "#22d3ee";
+    ctx.font = "22px system-ui";
+    ctx.textAlign = "center";
+    ctx.fillText("i", 106, top + panelHeight * 0.43 + 44);
+
+    ctx.textAlign = "left";
+    ctx.fillStyle = "#d7f7ff";
+    ctx.font = "14px system-ui";
+    const notice = ui.notice ? ui.notice.textContent.trim() : "";
+    const firstLine = notice.length > 0 ? notice.slice(0, 20) : "等待摄像头与手势追踪";
+    const secondLine = notice.length > 20 ? notice.slice(20, 44) : "双拳三次可呼叫战斗机队";
+    ctx.fillText(firstLine, 142, top + panelHeight * 0.43 + 29);
+    ctx.fillStyle = "rgba(215, 247, 255, 0.76)";
+    ctx.font = "14px system-ui";
+    ctx.fillText(secondLine, 142, top + panelHeight * 0.43 + 54);
+
+    const sideGrad = ctx.createLinearGradient(0, top, 0, bottom);
+    sideGrad.addColorStop(0, "rgba(34, 211, 238, 0)");
+    sideGrad.addColorStop(0.5, "rgba(34, 211, 238, 0.95)");
+    sideGrad.addColorStop(1, "rgba(34, 211, 238, 0)");
+    ctx.fillStyle = sideGrad;
+    ctx.shadowColor = "#22d3ee";
+    ctx.shadowBlur = 18;
+    ctx.fillRect(23, top + panelHeight * 0.38, 9, sideGlowH);
+    ctx.fillRect(this.width - 32, top + panelHeight * 0.38, 9, sideGlowH);
+    ctx.shadowBlur = 0;
+
+    ctx.fillStyle = "rgba(34, 211, 238, 0.86)";
+    ctx.fillRect(centerX - 56, bottom - 28, 20, 6);
+    ctx.fillRect(centerX - 28, bottom - 28, 20, 6);
+    ctx.fillRect(centerX, bottom - 28, 20, 6);
+    ctx.fillRect(centerX + 28, bottom - 28, 20, 6);
+
+    ctx.strokeStyle = "rgba(34, 211, 238, 0.32)";
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.arc(this.width / 2, this.height - 76, GAME.playerRadius, 0, Math.PI * 2);
+    ctx.moveTo(centerX - notchW * 0.42, top + panelHeight * 0.58);
+    ctx.lineTo(centerX - notchW * 0.36, top + panelHeight * 0.48);
+    ctx.lineTo(centerX + notchW * 0.36, top + panelHeight * 0.48);
+    ctx.lineTo(centerX + notchW * 0.42, top + panelHeight * 0.58);
     ctx.stroke();
-    const barWidth = 190;
-    const ratio = clamp(this.health / this.getMaxHealth(), 0, 1);
-    ctx.fillStyle = "rgba(0, 0, 0, 0.42)";
-    ctx.fillRect(this.width / 2 - barWidth / 2, this.height - 28, barWidth, 8);
-    ctx.fillStyle = ratio > 0.35 ? "#64e389" : "#ff7979";
-    ctx.fillRect(this.width / 2 - barWidth / 2, this.height - 28, barWidth * ratio, 8);
-    const shieldRatio = clamp(this.shield / GAME.maxShield, 0, 1);
-    ctx.fillStyle = "rgba(0, 0, 0, 0.42)";
-    ctx.fillRect(this.width / 2 - barWidth / 2, this.height - 42, barWidth, 7);
-    ctx.fillStyle = "#6bf2ff";
-    ctx.fillRect(this.width / 2 - barWidth / 2, this.height - 42, barWidth * shieldRatio, 7);
+    ctx.restore();
   }
 
-  drawDefenseLine() {
-    const y = this.getDefenseLineY();
-    const shieldRatio = clamp(this.shield / GAME.maxShield, 0, 1);
-    ctx.save();
-    ctx.strokeStyle = shieldRatio > 0 ? "rgba(107, 242, 255, 0.65)" : "rgba(255, 121, 121, 0.72)";
-    ctx.lineWidth = 3;
-    ctx.setLineDash([18, 12]);
+  drawChamferRect(x, y, w, h, cut = 12) {
     ctx.beginPath();
-    ctx.moveTo(24, y);
-    ctx.lineTo(this.width - 24, y);
+    ctx.moveTo(x + cut, y);
+    ctx.lineTo(x + w - cut, y);
+    ctx.lineTo(x + w, y + cut);
+    ctx.lineTo(x + w, y + h - cut);
+    ctx.lineTo(x + w - cut, y + h);
+    ctx.lineTo(x + cut, y + h);
+    ctx.lineTo(x, y + h - cut);
+    ctx.lineTo(x, y + cut);
+    ctx.closePath();
+  }
+
+  drawSharedDefenseStatus() {
+    const state = this.getDefenseState();
+    const panelHeight = this.getDefensePanelHeight();
+    const top = this.height - panelHeight;
+    const width = clamp(this.width * 0.23, 345, 435);
+    const x = this.width / 2 - width / 2;
+    const y = top + panelHeight * 0.61;
+    ctx.save();
+    ctx.shadowColor = "rgba(34, 211, 238, 0.28)";
+    ctx.shadowBlur = 8;
+    ctx.fillStyle = "rgba(3, 13, 20, 0.62)";
+    this.drawChamferRect(x - 16, y - 12, width + 32, 50, 10);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(34, 211, 238, 0.24)";
+    ctx.lineWidth = 1;
     ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.globalAlpha = 0.18 + shieldRatio * 0.18;
-    ctx.fillStyle = shieldRatio > 0 ? "#6bf2ff" : "#ff7979";
-    ctx.fillRect(0, y, this.width, Math.max(2, this.height - y));
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = "#aeb9c2";
-    ctx.font = "700 13px system-ui";
-    ctx.textAlign = "left";
-    ctx.fillText("防线", 32, y - 10);
+    ctx.shadowBlur = 0;
+    this.drawDefenseBar({
+      icon: "⬟",
+      label: "护盾",
+      value: state.shield,
+      max: state.maxShield,
+      x,
+      y,
+      width,
+      compact: true,
+      colorA: "#22d3ee",
+      colorB: "#00bcd4",
+    });
+    this.drawDefenseBar({
+      icon: "♥",
+      label: "生命",
+      value: state.health,
+      max: state.maxHealth,
+      x,
+      y: y + 23,
+      width,
+      compact: true,
+      colorA: "#22c55e",
+      colorB: "#39ff6a",
+    });
     ctx.restore();
+  }
+
+  drawDefenseBar({ icon, label, value, max, x, y, width, colorA, colorB, compact = false }) {
+    const ratio = clamp(value / Math.max(1, max), 0, 1);
+    const iconSize = compact ? 19 : 25;
+    const fontSize = compact ? 12 : 15;
+    const barX = x + (compact ? 38 : 52);
+    const barW = width - (compact ? 42 : 58);
+    const barH = compact ? 14 : 20;
+    ctx.fillStyle = colorA;
+    ctx.font = `${iconSize}px system-ui`;
+    ctx.textAlign = "center";
+    ctx.fillText(icon, x + (compact ? 18 : 24), y + (compact ? 13 : 19));
+    ctx.fillStyle = "rgba(2, 8, 12, 0.72)";
+    ctx.fillRect(barX, y, barW, barH);
+    const gradient = ctx.createLinearGradient(barX, y, barX + barW, y);
+    gradient.addColorStop(0, colorB);
+    gradient.addColorStop(1, colorA);
+    ctx.globalAlpha = 0.82;
+    ctx.fillStyle = gradient;
+    ctx.fillRect(barX, y, barW * ratio, barH);
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = "rgba(215, 247, 255, 0.16)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(barX, y, barW, barH);
+    ctx.fillStyle = "rgba(255, 255, 255, 0.16)";
+    ctx.fillRect(barX + 1, y + 2, Math.max(0, barW * ratio - 2), compact ? 2 : 3);
+    ctx.fillStyle = "#d7f7ff";
+    ctx.font = `${fontSize}px system-ui`;
+    ctx.textAlign = "left";
+    ctx.fillText(label, barX + 9, y + (compact ? 11 : 14));
+    ctx.textAlign = "right";
+    ctx.fillText(`${Math.ceil(value)}/${max}`, barX + barW - 7, y + (compact ? 11 : 14));
   }
 
   drawGuns(now) {
@@ -2231,49 +3307,84 @@ class Game {
   }
 
   drawPlayerWeaponSprite(origin, angle, weapon, active, firing, now) {
-    const turret = PLAYER_WEAPON_SHEET.turrets[weapon.id] || PLAYER_WEAPON_SHEET.turrets.normal;
-    const base = PLAYER_WEAPON_SHEET.base;
-    if (!playerWeaponSheetReady || !turret || !base) return false;
+    const base = playerWeaponSprites.base;
+    const gun = playerWeaponSprites.guns[weapon.id] || playerWeaponSprites.guns.normal;
+    if (!playerWeaponSheetReady || !base || !base.canvas || !gun || !gun.canvas) return false;
+    const turret = {
+      x: origin.x,
+      y: origin.y,
+      angle,
+      baseScale: 1,
+      gunScale: 1,
+      gunPivotX: gun.pivotX,
+      gunPivotY: gun.pivotY,
+    };
+    const baseWidth = base.drawW * turret.baseScale;
+    const baseHeight = base.drawH * turret.baseScale;
+    const gunWidth = gun.drawW * turret.gunScale;
+    const gunHeight = gun.drawH * turret.gunScale;
 
     ctx.save();
-    ctx.translate(origin.x, origin.y);
-    ctx.globalAlpha = active ? 1 : 0.62;
-    ctx.shadowColor = active ? weapon.color : "rgba(255, 255, 255, 0.18)";
-    ctx.shadowBlur = active ? 14 : 4;
-    ctx.drawImage(
-      playerWeaponSheet,
-      base.x,
-      base.y,
-      base.w,
-      base.h,
-      -50,
-      -22,
-      100,
-      64,
-    );
+    ctx.globalAlpha = 0.46;
+    ctx.fillStyle = "rgba(0, 0, 0, 0.62)";
+    ctx.filter = "blur(6px)";
+    ctx.beginPath();
+    ctx.ellipse(turret.x, turret.y + baseHeight * 0.12, baseWidth * 0.42, baseHeight * 0.14, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
 
-    ctx.rotate(angle + Math.PI / 2);
+    ctx.save();
+    ctx.translate(turret.x, turret.y);
+    ctx.globalAlpha = active ? 1 : 0.82;
+    ctx.shadowColor = active ? "rgba(34, 211, 238, 0.52)" : "rgba(255, 255, 255, 0.15)";
+    ctx.shadowBlur = active ? 22 : 8;
+    ctx.filter = active ? "brightness(1.18) contrast(1.1)" : "brightness(1.04) contrast(1.02)";
     ctx.drawImage(
-      playerWeaponSheet,
-      turret.x,
-      turret.y,
-      turret.w,
-      turret.h,
-      -turret.drawW / 2,
-      -turret.drawH + 28,
-      turret.drawW,
-      turret.drawH,
+      base.canvas,
+      -baseWidth / 2,
+      -baseHeight / 2,
+      baseWidth,
+      baseHeight,
     );
     ctx.restore();
 
+    ctx.save();
+    ctx.translate(
+      turret.x + TURRET_PIVOT_CONFIG.gunOffsetX,
+      turret.y + TURRET_PIVOT_CONFIG.gunOffsetY,
+    );
+    ctx.rotate(turret.angle + Math.PI / 2);
+    ctx.globalAlpha = active ? 1 : 0.84;
+    ctx.shadowColor = active ? weapon.color : "rgba(255, 255, 255, 0.18)";
+    ctx.shadowBlur = active ? 26 : 10;
+    ctx.filter = active ? "brightness(1.22) contrast(1.12)" : "brightness(1.06) contrast(1.04)";
+    ctx.drawImage(
+      gun.canvas,
+      -turret.gunPivotX * turret.gunScale,
+      -turret.gunPivotY * turret.gunScale,
+      gunWidth,
+      gunHeight,
+    );
+    ctx.restore();
+
+    if (DEBUG_TURRET_PIVOT) {
+      ctx.save();
+      ctx.fillStyle = "red";
+      ctx.fillRect(turret.x - 2, turret.y - 2, 4, 4);
+      ctx.restore();
+    }
+
     if (firing) {
-      this.drawSpriteMuzzleFlash(origin, angle, weapon.color, now);
+      this.drawSpriteMuzzleFlash(origin, angle, weapon.color, now, gun.muzzle || 78);
     }
     return true;
   }
 
-  drawSpriteMuzzleFlash(origin, angle, color, now) {
+  drawSpriteMuzzleFlash(origin, angle, color, now, muzzleDistance = 78) {
     const pulse = 0.74 + Math.sin(now * 0.05) * 0.18;
+    const start = muzzleDistance - 12;
+    const tip = muzzleDistance + 18;
+    const inner = muzzleDistance + 10;
     ctx.save();
     ctx.translate(origin.x, origin.y);
     ctx.rotate(angle);
@@ -2281,18 +3392,90 @@ class Game {
     ctx.shadowBlur = 16;
     ctx.fillStyle = "rgba(255, 246, 190, 0.88)";
     ctx.beginPath();
-    ctx.moveTo(74, 0);
-    ctx.lineTo(106, -11 * pulse);
-    ctx.lineTo(96, 0);
-    ctx.lineTo(106, 11 * pulse);
+    ctx.moveTo(start, 0);
+    ctx.lineTo(tip, -10 * pulse);
+    ctx.lineTo(inner, 0);
+    ctx.lineTo(tip, 10 * pulse);
     ctx.closePath();
     ctx.fill();
     ctx.fillStyle = color;
     ctx.globalAlpha = 0.55;
     ctx.beginPath();
-    ctx.arc(86, 0, 18 * pulse, 0, Math.PI * 2);
+    ctx.arc(muzzleDistance, 0, 16 * pulse, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
+  }
+
+  drawFighters(now) {
+    for (const fighter of this.fighters) {
+      const angle = Math.atan2(fighter.vy || -1, fighter.vx || 0);
+      ctx.save();
+      ctx.translate(fighter.x, fighter.y);
+      ctx.rotate(angle + Math.PI / 2);
+      ctx.globalAlpha = clamp((fighter.until - now) / 650, 0.28, 1);
+      if (now < (fighter.flashUntil || 0)) {
+        ctx.shadowColor = "#ffffff";
+        ctx.shadowBlur = 18;
+      } else {
+        const rect = FRIEND_PLANE_SHEET.rects[fighter.spriteIndex] || FRIEND_PLANE_SHEET.rects[0];
+        ctx.shadowColor = rect.color;
+        ctx.shadowBlur = 10;
+      }
+      if (!this.drawFriendPlaneSprite(fighter)) {
+        this.drawFallbackFighter(fighter);
+      }
+      ctx.restore();
+
+      const hpRatio = clamp(fighter.hp / fighter.maxHp, 0, 1);
+      ctx.save();
+      ctx.fillStyle = "rgba(0, 0, 0, 0.42)";
+      ctx.fillRect(fighter.x - 22, fighter.y + fighter.r + 6, 44, 4);
+      ctx.fillStyle = hpRatio > 0.45 ? "#6bf2ff" : "#ff7979";
+      ctx.fillRect(fighter.x - 22, fighter.y + fighter.r + 6, 44 * hpRatio, 4);
+      ctx.restore();
+    }
+  }
+
+  drawFriendPlaneSprite(fighter) {
+    const rect = FRIEND_PLANE_SHEET.rects[fighter.spriteIndex] || FRIEND_PLANE_SHEET.rects[0];
+    if (!friendPlaneSheetReady || !friendPlaneCanvas || !rect) return false;
+    const isFlashing = performance.now() < (fighter.flashUntil || 0);
+    const size = 78;
+    ctx.drawImage(
+      friendPlaneCanvas,
+      rect.x,
+      rect.y,
+      rect.w,
+      rect.h,
+      -size / 2,
+      -size / 2,
+      size,
+      size,
+    );
+    if (isFlashing) this.drawHitHighlight(size, size);
+    return true;
+  }
+
+  drawFallbackFighter(fighter) {
+    const rect = FRIEND_PLANE_SHEET.rects[fighter.spriteIndex] || FRIEND_PLANE_SHEET.rects[0];
+    const color = rect.color || "#6bf2ff";
+    ctx.fillStyle = color;
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.7)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, -34);
+    ctx.lineTo(24, 20);
+    ctx.lineTo(7, 14);
+    ctx.lineTo(0, 34);
+    ctx.lineTo(-7, 14);
+    ctx.lineTo(-24, 20);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "rgba(255, 255, 255, 0.78)";
+    ctx.beginPath();
+    ctx.ellipse(0, -8, 8, 18, 0, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   drawMonsters(now) {
@@ -2357,11 +3540,7 @@ class Game {
       width,
       height,
     );
-    if (isFlashing) {
-      ctx.globalCompositeOperation = "source-atop";
-      ctx.fillStyle = "rgba(255, 255, 255, 0.45)";
-      ctx.fillRect(-width / 2, -height / 2, width, height);
-    }
+    if (isFlashing) this.drawHitHighlight(width, height);
     ctx.restore();
     return true;
   }
@@ -2387,13 +3566,22 @@ class Game {
       width,
       height,
     );
-    if (isFlashing) {
-      ctx.globalCompositeOperation = "source-atop";
-      ctx.fillStyle = "rgba(255, 255, 255, 0.38)";
-      ctx.fillRect(-width / 2, -height / 2, width, height);
-    }
+    if (isFlashing) this.drawHitHighlight(width, height);
     ctx.restore();
     return true;
+  }
+
+  drawHitHighlight(width, height) {
+    const radius = Math.max(width, height) * 0.54;
+    const flash = ctx.createRadialGradient(0, 0, radius * 0.08, 0, 0, radius);
+    flash.addColorStop(0, "rgba(255, 255, 255, 0.42)");
+    flash.addColorStop(0.38, "rgba(255, 244, 178, 0.2)");
+    flash.addColorStop(1, "rgba(255, 255, 255, 0)");
+    ctx.globalCompositeOperation = "lighter";
+    ctx.fillStyle = flash;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, width * 0.48, height * 0.48, 0, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   drawAttackWarning(monster, now) {
@@ -2445,7 +3633,7 @@ class Game {
       ctx.roundRect(-r * 0.52, -r * 0.18, r * 1.04, r * 0.58, 5);
       ctx.fill();
       ctx.fillStyle = "#f4f8fb";
-      ctx.font = "900 15px system-ui";
+      ctx.font = "13px system-ui";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillText(WEAPONS[monster.weaponId] ? WEAPONS[monster.weaponId].icon : "W", 0, r * 0.12);
@@ -2485,8 +3673,9 @@ class Game {
 
     if (monster.variant === "boss") {
       if (now < (monster.warningUntil || 0)) {
+        const target = monster.desperationTarget || { x: this.width / 2, y: this.getDefenseLineY() };
         ctx.save();
-        ctx.rotate(Math.atan2(this.height - 76 - monster.y, this.width / 2 - monster.x));
+        ctx.rotate(Math.atan2(target.y - monster.y, target.x - monster.x));
         ctx.strokeStyle = "rgba(255, 76, 76, 0.78)";
         ctx.lineWidth = 4;
         ctx.setLineDash([12, 10]);
@@ -2522,7 +3711,7 @@ class Game {
       ctx.roundRect(-r * 0.7, r * 0.38, r * 1.4, r * 0.16, r * 0.06);
       ctx.fill();
       ctx.fillStyle = "#f4f8fb";
-      ctx.font = "900 13px system-ui";
+      ctx.font = "12px system-ui";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillText(monster.label, 0, -r * 0.02);
@@ -2651,7 +3840,7 @@ class Game {
     ctx.ellipse(0, -r * 0.04, r * 0.32, r * 0.24, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = "#f4f8fb";
-    ctx.font = "900 11px system-ui";
+    ctx.font = "11px system-ui";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(label, 0, labelY);
@@ -2668,17 +3857,33 @@ class Game {
 
   drawParticles() {
     for (const particle of this.particles) {
-      ctx.globalAlpha = clamp(particle.life * 2.4, 0, 1);
-      ctx.fillStyle = particle.color || "#f6c84c";
+      const lifeRatio = clamp(particle.life / (particle.maxLife || particle.life || 1), 0, 1);
+      ctx.globalAlpha = clamp(lifeRatio * 1.35, 0, 1);
+      const color = particle.color || "#f6c84c";
       const size = particle.size || 6;
-      ctx.fillRect(particle.x - size / 2, particle.y - size / 2, size, size);
+      const glow = ctx.createRadialGradient(particle.x, particle.y, 0, particle.x, particle.y, size * 1.85);
+      glow.addColorStop(0, "rgba(255, 255, 255, 0.92)");
+      glow.addColorStop(0.32, color);
+      glow.addColorStop(1, "rgba(255, 255, 255, 0)");
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(particle.x, particle.y, size * 1.85, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.globalAlpha = clamp(lifeRatio, 0, 0.9);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = Math.max(1, size * 0.22);
+      ctx.beginPath();
+      ctx.moveTo(particle.x - particle.vx * 0.025, particle.y - particle.vy * 0.025);
+      ctx.lineTo(particle.x + particle.vx * 0.008, particle.y + particle.vy * 0.008);
+      ctx.stroke();
     }
     ctx.globalAlpha = 1;
   }
 
   drawFloatingTexts() {
     ctx.textAlign = "center";
-    ctx.font = "800 16px system-ui";
+    ctx.font = "14px system-ui";
     for (const item of this.floatingTexts) {
       ctx.globalAlpha = clamp(item.life, 0, 1);
       ctx.fillStyle = item.color;
@@ -2687,17 +3892,66 @@ class Game {
     ctx.globalAlpha = 1;
   }
 
+  drawScoreEffects() {
+    // Score flight effects are rendered in the DOM layer above the HUD.
+  }
+
   drawWeaponBanner(now) {
     if (!this.weaponBanner || now > this.weaponBanner.until) return;
     const alpha = clamp((this.weaponBanner.until - now) / 450, 0, 1);
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.textAlign = "center";
-    ctx.font = "900 34px system-ui";
+    ctx.font = "24px system-ui";
     ctx.fillStyle = this.weaponBanner.color;
     ctx.shadowColor = this.weaponBanner.color;
     ctx.shadowBlur = 18;
     ctx.fillText(this.weaponBanner.text, this.width / 2, this.height * 0.24);
+    ctx.restore();
+  }
+
+  drawSpecialPrompt(now) {
+    if (!this.specialPrompt || now > this.specialPrompt.until) return;
+    const prompt = this.specialPrompt;
+    const life = prompt.until - prompt.start;
+    const elapsed = now - prompt.start;
+    const fadeIn = clamp(elapsed / 140, 0, 1);
+    const fadeOut = clamp((prompt.until - now) / 260, 0, 1);
+    const alpha = Math.min(fadeIn, fadeOut);
+    const width = 360;
+    const height = 62;
+    const x = this.width / 2 - width / 2;
+    const y = this.height * 0.34 - height / 2;
+    const pulse = 1 + Math.sin((elapsed / life) * Math.PI) * 0.035;
+
+    ctx.save();
+    ctx.translate(this.width / 2, y + height / 2);
+    ctx.scale(pulse, pulse);
+    ctx.translate(-this.width / 2, -(y + height / 2));
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = "rgba(2, 10, 16, 0.58)";
+    this.drawChamferRect(x, y, width, height, 12);
+    ctx.fill();
+    ctx.strokeStyle = prompt.color;
+    ctx.lineWidth = 1.5;
+    ctx.shadowColor = prompt.color;
+    ctx.shadowBlur = 10;
+    ctx.stroke();
+
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = "#f4fbff";
+    ctx.font = "22px system-ui";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(prompt.text, this.width / 2, y + 29);
+
+    const pipY = y + height - 12;
+    for (let i = 1; i <= 3; i += 1) {
+      ctx.beginPath();
+      ctx.arc(this.width / 2 + (i - 2) * 18, pipY, 4, 0, Math.PI * 2);
+      ctx.fillStyle = i <= prompt.progress ? prompt.color : "rgba(215, 247, 255, 0.22)";
+      ctx.fill();
+    }
     ctx.restore();
   }
 
@@ -2807,10 +4061,10 @@ class Game {
     ctx.fillRect(0, 0, this.width, this.height);
     ctx.textAlign = "center";
     ctx.fillStyle = "#f4f8fb";
-    ctx.font = "700 34px system-ui";
+    ctx.font = "28px system-ui";
     ctx.fillText("点击开始，允许摄像头访问", this.width / 2, this.height / 2 - 18);
     ctx.fillStyle = "#aeb9c2";
-    ctx.font = "500 18px system-ui";
+    ctx.font = "16px system-ui";
     ctx.fillText("击退外星舰队：侦察机、截击机、飞碟、重甲舰和母舰", this.width / 2, this.height / 2 + 24);
   }
 
@@ -2829,4 +4083,5 @@ class Game {
   }
 }
 
-new Game();
+const bodyFightGame = new Game();
+window.bodyFightGame = bodyFightGame;

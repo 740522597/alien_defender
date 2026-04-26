@@ -5,25 +5,28 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Body Fight</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="./style.css">
+  <link rel="stylesheet" href="./style.css?v=2026042652">
 </head>
 <body>
   <main class="app">
     <section class="stage" id="stage">
       <video id="camera" class="camera" playsinline autoplay muted></video>
       <canvas id="game" class="game" width="1920" height="1080"></canvas>
+      <div class="score-fx-layer" id="scoreFxLayer" aria-hidden="true"></div>
 
       <header class="hud">
         <div class="hud-item"><span>关卡</span><strong id="levelState">1/10</strong></div>
         <div class="hud-item"><span>分数</span><strong id="score">0</strong></div>
-        <div class="hud-item"><span>生命</span><strong id="health">100</strong></div>
-        <div class="hud-item"><span>护盾</span><strong id="shieldState">30</strong></div>
         <div class="hud-item"><span>时间</span><strong id="timeLeft">180</strong></div>
         <div class="hud-item wide"><span>武器</span><strong id="weaponState">普通 N</strong></div>
         <div class="hud-item"><span>连击</span><strong id="comboState">0</strong></div>
-        <div class="hud-item wide"><span>最高</span><strong id="bestState">0</strong></div>
-        <div class="hud-item wide"><span>识别</span><strong id="trackingState">未启动</strong></div>
       </header>
+
+      <aside class="special-slot" id="specialSlot" aria-label="特殊技能">
+        <span class="special-slot-icon" id="specialSlotIcon" aria-hidden="true"></span>
+        <strong id="specialState">×1</strong>
+        <span id="specialCooldownState"></span>
+      </aside>
 
       <div class="controls">
         <button id="startBtn" type="button">开始</button>
@@ -36,9 +39,10 @@
           </select>
         </label>
         <button id="fullscreenBtn" type="button">全屏</button>
-        <button id="calibrateBtn" type="button" disabled>校准</button>
         <button id="pauseBtn" type="button" disabled>暂停</button>
         <button id="restartBtn" type="button" disabled>重新开始</button>
+        <button id="recordStartBtn" type="button">开始录制</button>
+        <button id="recordStopBtn" type="button" disabled>停止并下载</button>
       </div>
 
       <section class="level-overlay" id="levelOverlay" hidden>
@@ -56,6 +60,6 @@
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
-  <script src="./main.js?v=2026042624"></script>
+  <script src="./main.js?v=2026042652"></script>
 </body>
 </html>
