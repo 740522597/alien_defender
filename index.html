@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Body Fight</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <main class="app">
+    <section class="stage" id="stage">
+      <video id="camera" class="camera" playsinline autoplay muted></video>
+      <canvas id="game" class="game" width="2560" height="1440"></canvas>
+
+      <header class="hud">
+        <div class="hud-item"><span>关卡</span><strong id="levelState">1/10</strong></div>
+        <div class="hud-item"><span>分数</span><strong id="score">0</strong></div>
+        <div class="hud-item"><span>生命</span><strong id="health">100</strong></div>
+        <div class="hud-item"><span>护盾</span><strong id="shieldState">30</strong></div>
+        <div class="hud-item"><span>时间</span><strong id="timeLeft">180</strong></div>
+        <div class="hud-item wide"><span>武器</span><strong id="weaponState">普通 N</strong></div>
+        <div class="hud-item"><span>连击</span><strong id="comboState">0</strong></div>
+        <div class="hud-item wide"><span>最高</span><strong id="bestState">0</strong></div>
+        <div class="hud-item wide"><span>识别</span><strong id="trackingState">未启动</strong></div>
+      </header>
+
+      <div class="controls">
+        <button id="startBtn" type="button">开始</button>
+        <label class="difficulty-control">
+          <span>难度</span>
+          <select id="difficultySelect">
+            <option value="easy">简单 1分钟</option>
+            <option value="normal" selected>中等 3分钟</option>
+            <option value="hard">困难 5分钟</option>
+          </select>
+        </label>
+        <button id="fullscreenBtn" type="button">全屏</button>
+        <button id="calibrateBtn" type="button" disabled>校准</button>
+        <button id="pauseBtn" type="button" disabled>暂停</button>
+        <button id="restartBtn" type="button" disabled>重新开始</button>
+      </div>
+
+      <section class="level-overlay" id="levelOverlay" hidden>
+        <h2 id="summaryTitle">第 1 关完成</h2>
+        <div class="summary-stats" id="summaryStats"></div>
+        <p id="summaryCountdown">请选择一个升级后进入下一关</p>
+        <div class="upgrade-choices" id="upgradeChoices" hidden></div>
+        <button id="nextLevelBtn" type="button">请选择一个升级</button>
+      </section>
+
+      <p class="notice" id="notice">
+        需要通过 localhost 或 https 打开页面。点击开始后，请允许浏览器访问摄像头。
+      </p>
+    </section>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+  <script src="./main.js?v=2026042620"></script>
+</body>
+</html>
