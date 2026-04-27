@@ -27,6 +27,9 @@ const ui = {
   restartBtn: document.getElementById("restartBtn"),
   recordStartBtn: document.getElementById("recordStartBtn"),
   recordStopBtn: document.getElementById("recordStopBtn"),
+  resourceLoader: document.getElementById("resourceLoader"),
+  resourceLoaderTitle: document.getElementById("resourceLoaderTitle"),
+  resourceLoaderText: document.getElementById("resourceLoaderText"),
   levelOverlay: document.getElementById("levelOverlay"),
   summaryTitle: document.getElementById("summaryTitle"),
   summaryStats: document.getElementById("summaryStats"),
@@ -62,6 +65,19 @@ const CDN = {
   hands: `https://cdn.jsdelivr.net/npm/@mediapipe/hands@${MEDIAPIPE_HANDS_VERSION}/hands.js`,
   assets: `https://cdn.jsdelivr.net/npm/@mediapipe/hands@${MEDIAPIPE_HANDS_VERSION}/`,
 };
+
+const MEDIAPIPE_PRELOAD_FILES = [
+  "hands_solution_packed_assets.data",
+  "hands_solution_packed_assets_loader.js",
+  "hands_solution_simd_wasm_bin.data",
+  "hands_solution_simd_wasm_bin.js",
+  "hands_solution_simd_wasm_bin.wasm",
+  "hands_solution_wasm_bin.js",
+  "hands_solution_wasm_bin.wasm",
+  "hands.binarypb",
+  "hand_landmark_full.tflite",
+  "hand_landmark_lite.tflite",
+];
 
 const GAME = {
   attackRadius: 74,
@@ -404,6 +420,15 @@ function timeout(ms, message) {
 function delay(ms) {
   return new Promise((resolve) => {
     window.setTimeout(resolve, ms);
+  });
+}
+
+function waitForImage(image) {
+  if (!image) return Promise.resolve();
+  if (image.complete && image.naturalWidth > 0) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    image.addEventListener("load", () => resolve(), { once: true });
+    image.addEventListener("error", () => reject(new Error(`图片资源加载失败：${image.src}`)), { once: true });
   });
 }
 
@@ -1608,6 +1633,64 @@ class Game {
     ui.restartBtn.addEventListener("click", () => this.restart());
     if (ui.recordStartBtn) ui.recordStartBtn.addEventListener("click", () => startGameRecording());
     if (ui.recordStopBtn) ui.recordStopBtn.addEventListener("click", () => stopGameRecording());
+  }
+
+  async preloadResources() {
+    ui.startBtn.disabled = true;
+    this.setResourceLoader("加载资源中...", "正在准备手势识别模型和游戏资源");
+    try {
+      await this.preloadMediaPipeAssets();
+      await this.preloadGameImages();
+      await this.tracker.initModel();
+      this.setResourceLoader("准备完成", "点击开始后允许摄像头访问");
+      window.setTimeout(() => {
+        if (ui.resourceLoader) ui.resourceLoader.hidden = true;
+      }, 260);
+      ui.startBtn.disabled = false;
+      ui.notice.textContent = "资源已准备完成。点击开始后，请允许浏览器访问摄像头。";
+    } catch (error) {
+      console.error(error);
+      this.setResourceLoader("资源加载失败", "请检查网络后刷新页面重试");
+      if (ui.resourceLoader) ui.resourceLoader.classList.add("is-error");
+      ui.notice.textContent = error && error.message ? error.message : "资源加载失败，请刷新页面重试。";
+      ui.startBtn.disabled = true;
+    }
+  }
+
+  setResourceLoader(title, text) {
+    if (ui.resourceLoader) ui.resourceLoader.hidden = false;
+    if (ui.resourceLoaderTitle) ui.resourceLoaderTitle.textContent = title;
+    if (ui.resourceLoaderText) ui.resourceLoaderText.textContent = text;
+  }
+
+  async preloadMediaPipeAssets() {
+    const files = MEDIAPIPE_PRELOAD_FILES.map((file) => `${CDN.assets}${file}`);
+    let loaded = 0;
+    for (const url of files) {
+      const name = url.slice(url.lastIndexOf("/") + 1);
+      this.setResourceLoader("加载资源中...", `正在下载 ${name} (${loaded + 1}/${files.length})`);
+      const response = await fetch(url, { cache: "force-cache" });
+      if (!response.ok) {
+        throw new Error(`手势识别资源下载失败：${name}`);
+      }
+      await response.arrayBuffer();
+      loaded += 1;
+    }
+  }
+
+  async preloadGameImages() {
+    const images = [
+      ["敌机素材", spriteSheet],
+      ["玩家武器素材", playerWeaponSheet],
+      ["友方战机素材", friendPlaneSheet],
+      ["武器包和导弹素材", weaponMissileSheet],
+    ];
+    let loaded = 0;
+    for (const [label, image] of images) {
+      this.setResourceLoader("加载资源中...", `正在准备 ${label} (${loaded + 1}/${images.length})`);
+      await waitForImage(image);
+      loaded += 1;
+    }
   }
 
   createPlayerMods() {
@@ -4299,3 +4382,4 @@ class Game {
 
 const bodyFightGame = new Game();
 window.bodyFightGame = bodyFightGame;
+bodyFightGame.preloadResources();

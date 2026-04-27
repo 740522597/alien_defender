@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Body Fight</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="./style.css?v=2026042666">
+  <link rel="stylesheet" href="./style.css?v=2026042668">
 </head>
 <body>
   <main class="app">
@@ -13,6 +13,13 @@
       <video id="camera" class="camera" playsinline autoplay muted></video>
       <canvas id="game" class="game" width="1920" height="1080"></canvas>
       <div class="score-fx-layer" id="scoreFxLayer" aria-hidden="true"></div>
+      <div class="resource-loader" id="resourceLoader" role="status" aria-live="polite">
+        <div class="resource-loader-panel">
+          <span class="resource-loader-ring" aria-hidden="true"></span>
+          <strong id="resourceLoaderTitle">加载资源中...</strong>
+          <p id="resourceLoaderText">正在准备手势识别模型和游戏资源</p>
+        </div>
+      </div>
 
       <header class="hud">
         <div class="hud-item"><span>关卡</span><strong id="levelState">1/10</strong></div>
@@ -29,7 +36,7 @@
       </aside>
 
       <div class="controls">
-        <button id="startBtn" type="button">开始</button>
+        <button id="startBtn" type="button" disabled>开始</button>
         <label class="difficulty-control">
           <span>难度</span>
           <select id="difficultySelect">
@@ -60,6 +67,6 @@
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js"></script>
-  <script src="./main.js?v=2026042666"></script>
+  <script src="./main.js?v=2026042668"></script>
 </body>
 </html>

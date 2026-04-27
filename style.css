@@ -108,6 +108,67 @@ button:not(:disabled):hover {
   pointer-events: none;
 }
 
+.resource-loader {
+  position: absolute;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(circle at 50% 48%, rgba(34, 211, 238, 0.12), transparent 34%),
+    linear-gradient(180deg, rgba(2, 8, 12, 0.96), rgba(4, 13, 18, 0.98));
+}
+
+.resource-loader-panel {
+  width: min(520px, calc(100% - 44px));
+  min-height: 210px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 14px;
+  padding: 32px;
+  border: 1px solid rgba(34, 211, 238, 0.46);
+  background:
+    linear-gradient(180deg, rgba(10, 26, 34, 0.94), rgba(4, 12, 18, 0.96));
+  box-shadow:
+    inset 0 0 28px rgba(34, 211, 238, 0.12),
+    0 0 34px rgba(34, 211, 238, 0.14);
+  text-align: center;
+}
+
+.resource-loader-ring {
+  width: 54px;
+  height: 54px;
+  border: 3px solid rgba(215, 247, 255, 0.18);
+  border-top-color: #22d3ee;
+  border-radius: 50%;
+  animation: resource-spin 0.9s linear infinite;
+}
+
+.resource-loader strong {
+  font-size: 28px;
+  font-weight: 600;
+  color: #d7f7ff;
+}
+
+.resource-loader p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.resource-loader.is-error .resource-loader-ring {
+  animation: none;
+  border-color: rgba(238, 91, 91, 0.28);
+  border-top-color: var(--danger);
+}
+
+@keyframes resource-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .game {
   z-index: 1;
 }
