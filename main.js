@@ -57,9 +57,10 @@ function readDebugOptions() {
   };
 }
 
+const MEDIAPIPE_HANDS_VERSION = "0.4.1675469240";
 const CDN = {
-  hands: "https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js",
-  assets: "https://cdn.jsdelivr.net/npm/@mediapipe/hands/",
+  hands: `https://cdn.jsdelivr.net/npm/@mediapipe/hands@${MEDIAPIPE_HANDS_VERSION}/hands.js`,
+  assets: `https://cdn.jsdelivr.net/npm/@mediapipe/hands@${MEDIAPIPE_HANDS_VERSION}/`,
 };
 
 const GAME = {
@@ -869,6 +870,7 @@ class HandTracker {
     this.resultCount = 0;
     this.firstHandAt = 0;
     this.errorCount = 0;
+    this.loadFailed = false;
     this.status = "未启动";
     this.handsState = {
       Left: this.createHandState("Left"),
@@ -953,6 +955,7 @@ class HandTracker {
     });
     this.hands.onResults((results) => this.handleResults(results));
     this.ready = true;
+    this.loadFailed = false;
     this.status = "模型已加载，等待首帧";
   }
 
@@ -990,28 +993,49 @@ class HandTracker {
   }
 
   update(now) {
-    if (!this.ready || this.recovering || this.source.readyState < 2) return;
+    if (!this.ready || this.recovering || this.loadFailed || this.source.readyState < 2) return;
     if (!this.source.videoWidth || !this.source.videoHeight) {
       this.status = "等待摄像头画面";
       return;
     }
-    if (this.busy && now - this.sendStartedAt > 900) {
-      this.busy = false;
-      this.status = "追踪超时，正在重试";
+    if (this.busy) {
+      const elapsed = now - this.sendStartedAt;
+      if (this.resultCount === 0 && elapsed > 1200) {
+        this.status = `首次加载手势模型中，已等待 ${Math.ceil(elapsed / 1000)} 秒`;
+      } else if (this.resultCount > 0 && elapsed > 2500) {
+        this.status = "手势识别处理中";
+      }
+      if (elapsed > 35000) {
+        this.ready = false;
+        this.busy = false;
+        this.loadFailed = true;
+        this.status = "手势模型加载超时，请刷新页面或检查网络。";
+      }
+      return;
     }
-    if (this.busy) return;
     if (now - this.lastSendAt < 45) return;
     this.lastSendAt = now;
     this.sendStartedAt = now;
     this.busy = true;
+    if (this.resultCount === 0) {
+      this.status = "正在下载并初始化手势模型，首次可能需要 10-20 秒";
+    }
     this.hands.send({ image: this.source })
       .catch((error) => {
         console.error(error);
         this.errorCount += 1;
         const message = error && error.message ? error.message : "unknown";
-        this.status = `追踪异常${this.errorCount}：${message.slice(0, 18)}`;
-        this.lastSendAt = now + 240;
-        if (this.errorCount >= 2) this.rebuildModel();
+        const moduleError = /Module\.arguments|arguments_|Aborted/i.test(message);
+        this.status = moduleError
+          ? "手势模型初始化失败，请刷新页面后重试。"
+          : `追踪异常${this.errorCount}：${message.slice(0, 18)}`;
+        this.lastSendAt = now + 600;
+        if (moduleError) {
+          this.ready = false;
+          this.loadFailed = true;
+        } else if (this.errorCount >= 2) {
+          this.rebuildModel();
+        }
       })
       .finally(() => {
         this.busy = false;
@@ -1025,6 +1049,8 @@ class HandTracker {
     const landmarksList = results.multiHandLandmarks || [];
     const handednessList = results.multiHandedness || [];
     this.resultCount += 1;
+    this.errorCount = 0;
+    this.loadFailed = false;
     this.handCount = landmarksList.length;
     this.status = this.handCount > 0 ? `检测到 ${this.handCount} 只手` : "未检测到手";
     if (this.handCount > 0 && !this.firstHandAt) this.firstHandAt = now;
@@ -1758,6 +1784,12 @@ class Game {
   }
 
   updateCalibration(now) {
+    if (this.tracker.loadFailed) {
+      ui.notice.textContent = this.tracker.status;
+      ui.summaryCountdown.textContent = "手势识别加载失败，请刷新页面重试";
+      ui.startBtn.disabled = false;
+      return;
+    }
     const activeHands = this.getActiveHands();
     for (const hand of activeHands) {
       const point = hand.palmCenter;
@@ -1780,6 +1812,9 @@ class Game {
     ui.summaryCountdown.textContent = this.calibrationCountdownStarted
       ? (this.calibrationMode === "resume" ? `${left} 秒后继续游戏` : `${left} 秒后开始第 1 关`)
       : "等待屏幕出现手部光标";
+    if (!this.calibrationCountdownStarted) {
+      ui.notice.textContent = this.tracker.status || "等待手势识别启动。";
+    }
     if (ui.summaryStats) {
       ui.summaryStats.innerHTML = [
         ["动作", "移动双手"],
